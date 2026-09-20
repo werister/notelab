@@ -41,6 +41,9 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     RunnerSpec("copilot", "copilot", ["-p", "{prompt}", "--allow-all-tools"]),
     RunnerSpec("claude", "claude", ["-p", "{prompt}"]),
     RunnerSpec("codex", "codex", ["exec", "{prompt}"]),
+    # qoder (@qoder-ai/qodercli) and qwen (QwenLM/qwen-code): headless one-shot verified.
+    RunnerSpec("qoder", "qoder", ["-p", "{prompt}"]),
+    RunnerSpec("qwen", "qwen", ["{prompt}"]),
 ]
 
 

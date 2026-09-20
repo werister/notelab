@@ -113,7 +113,7 @@ def test_decay_lowers_score_when_not_refreshed():
 def test_detect_runners_reports_availability():
     runners = detect_runners()
     names = {r.name for r in runners}
-    assert {"opencode", "copilot"} <= names
+    assert {"opencode", "copilot", "qoder", "qwen"} <= names
     # each has an availability boolean; at least the structure is right
     assert all(isinstance(r.available, bool) for r in runners)
 
