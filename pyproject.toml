@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notelab"
+version = "0.1.0"
+description = "A self-improving research MCP server on top of Google NotebookLM — scores source data quality and A/B-tests deep-research prompts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "werister" }]
+keywords = ["mcp", "notebooklm", "research", "agents", "nlm", "deep-research", "ab-testing"]
+# Engine core is stdlib-only on purpose: it installs and its tests run with zero deps.
+dependencies = []
+
+[project.optional-dependencies]
+# Optional accelerator: the official MCP SDK. Pinned <2 because 2.x renamed FastMCP
+# to MCPServer and changed APIs. NOT required — the repo ships its own stdlib-only
+# stdio MCP server (see notelab.mcp_stdio), so `pip install .` runs with no
+# third-party deps at all.
+mcp = ["mcp<2"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+notelab = "notelab.server:main"
+
+[project.urls]
+Homepage = "https://github.com/werister/notelab"
+Design = "https://github.com/werister/notelab/blob/main/docs/DESIGN.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/notelab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

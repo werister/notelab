@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""
+nlmx — a thin, guarded wrapper around the `nlm` NotebookLM CLI.
+
+Delegates everything to real `nlm` (no reimplemented auth/API surface).
+Only intercepts the operations that were found, through direct testing,
+to silently corrupt state or block forever with no error signal:
+
+  1. `research import` — not idempotent upstream (duplicates sources on
+     a repeat call, identical success message either way). nlmx keeps a
+     local ledger and refuses a repeat import unless --force.
+  2. generation `*  create` commands — require --confirm/-y or they
+     block/no-op; nlmx injects it automatically.
+  3. `notebook query --source-ids` / `query notebook --source-ids` —
+     confirmed broken upstream (deselects ALL sources instead of
+     scoping to one). nlmx refuses and points at the real workaround.
+  4. `chat start` — interactive REPL, unusable by an agent. Refused.
+
+Everything else passes straight through to `nlm`, unmodified.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+NLM = str(Path.home() / ".local/bin/nlm")
+LEDGER_PATH = Path.home() / ".local/state/nlmx/imported.json"
+
+GENERATION_TYPES = {
+    "audio", "report", "quiz", "flashcards", "mindmap",
+    "slides", "infographic", "video", "data-table",
+}
+
+
+def run(args, capture=False):
+    if capture:
+        return subprocess.run([NLM, *args], capture_output=True, text=True)
+    return subprocess.run([NLM, *args])
+
+
+def load_ledger():
+    if LEDGER_PATH.exists():
+        return json.loads(LEDGER_PATH.read_text())
+    return {}
+
+
+def save_ledger(ledger):
+    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LEDGER_PATH.write_text(json.dumps(ledger, indent=2))
+
+
+def source_count(notebook_id):
+    r = run(["source", "list", notebook_id, "--json"], capture=True)
+    try:
+        return len(json.loads(r.stdout))
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def die(msg):
+    print(f"[nlmx] {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_research_import(args):
+    # nlm research import {notebook_id} [task_id] [options]
+    positional = [a for a in args if not a.startswith("-")]
+    if not positional:
+        die("usage: nlmx research import <notebook_id> [task_id] [...]")
+    notebook_id = positional[0]
+    task_id = positional[1] if len(positional) > 1 else None
+    force = "--force" in args
+    key = f"{notebook_id}:{task_id or 'auto'}"
+
+    ledger = load_ledger()
+    if key in ledger and not force:
+        prev = ledger[key]
+        die(
+            f"task already imported via nlmx at {prev['imported_at']} "
+            f"(source count {prev['count_before']} -> {prev['count_after']}). "
+            f"Re-running WILL duplicate every source (confirmed upstream bug). "
+            f"Pass --force if you really mean to re-import."
+        )
+
+    args = [a for a in args if a != "--force"]
+    before = source_count(notebook_id)
+    result = run(["research", "import", *args])
+    after = source_count(notebook_id)
+
+    print(f"[nlmx] source count: {before} -> {after}", file=sys.stderr)
+    if before is not None and after is not None and before > 0 and after >= before * 2:
+        print(
+            "[nlmx] WARNING: count roughly doubled — this looks like the "
+            "known duplicate-on-reimport bug, not a clean import.",
+            file=sys.stderr,
+        )
+
+    ledger[key] = {
+        "imported_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "count_before": before,
+        "count_after": after,
+    }
+    save_ledger(ledger)
+    sys.exit(result.returncode)
+
+
+def cmd_research_run(args):
+    """Composite: start -> poll -> import, once, safely. New command, not in upstream nlm."""
+    if not args:
+        die('usage: nlmx research run "<query>" --notebook-id <id> [--mode fast|deep] [--source web|drive]')
+    query = args[0]
+    rest = args[1:]
+
+    def get_opt(name, default=None):
+        if name in rest:
+            i = rest.index(name)
+            return rest[i + 1] if i + 1 < len(rest) else default
+        return default
+
+    notebook_id = get_opt("--notebook-id") or get_opt("-n")
+    if not notebook_id:
+        die("--notebook-id is required (nlmx does not create destination notebooks implicitly)")
+    mode = get_opt("--mode") or get_opt("-m") or "fast"
+    source = get_opt("--source") or get_opt("-s") or "web"
+
+    start_args = ["research", "start", query, "--notebook-id", notebook_id, "--mode", mode, "--source", source]
+    r = run(start_args, capture=True)
+    print(r.stdout, end="")
+    if r.returncode != 0:
+        print(r.stderr, file=sys.stderr)
+        sys.exit(r.returncode)
+
+    m = re.search(r"Task ID:\s*(\S+)", r.stdout)
+    if not m:
+        die("could not parse Task ID from `research start` output — inspect manually")
+    task_id = m.group(1)
+
+    max_wait = "60" if mode == "fast" else "600"
+    status_r = run(["research", "status", notebook_id, "--task-id", task_id, "--max-wait", max_wait], capture=True)
+    print(status_r.stdout, end="")
+    if "completed" not in status_r.stdout.lower():
+        die(f"research task {task_id} did not complete within {max_wait}s — check manually with `nlm research status`")
+
+    cmd_research_import([notebook_id, task_id])
+
+
+def cmd_query(args):
+    if "--source-ids" in args or "-s" in args:
+        die(
+            "--source-ids is confirmed broken upstream (deselects ALL sources "
+            "instead of scoping to one; returns sources_used: []). "
+            "Use `nlm source content <source_id>` to fetch that source's raw "
+            "text and reason over it directly instead."
+        )
+    sys.exit(run(args).returncode)
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        die("usage: nlmx <command> [args...] — unrecognized commands pass through to `nlm`")
+
+    # chat start — refuse outright
+    if argv[:2] == ["chat", "start"]:
+        die("`chat start` opens an interactive REPL an agent can't control. Use `nlmx query <notebook> \"<question>\"` (one-shot) instead.")
+
+    # research run — new composite command
+    if argv[:2] == ["research", "run"]:
+        cmd_research_run(argv[2:])
+        return
+
+    # research import — guarded
+    if argv[:2] == ["research", "import"]:
+        cmd_research_import(argv[2:])
+        return
+
+    # query (both noun-first and verb-first spellings) — block broken --source-ids
+    if argv[:2] == ["notebook", "query"] or argv[:2] == ["query", "notebook"]:
+        cmd_query(argv)
+        return
+
+    # generation create commands — auto-inject --confirm
+    if len(argv) >= 2 and argv[0] in GENERATION_TYPES and argv[1] == "create":
+        if "--confirm" not in argv and "-y" not in argv:
+            print("[nlmx] auto-adding --confirm (omitting it blocks/no-ops)", file=sys.stderr)
+            argv = [*argv, "--confirm"]
+    if len(argv) >= 2 and argv[0] == "create" and argv[1] in GENERATION_TYPES:
+        if "--confirm" not in argv and "-y" not in argv:
+            print("[nlmx] auto-adding --confirm (omitting it blocks/no-ops)", file=sys.stderr)
+            argv = [*argv, "--confirm"]
+
+    # everything else: pure passthrough
+    os.execv(NLM, [NLM, *argv])
+
+
+if __name__ == "__main__":
+    main()
