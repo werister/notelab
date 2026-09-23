@@ -64,6 +64,9 @@ class EvolutionPolicy:
     evict_after_strikes: int = 3     # weak this many times in a row → propose evict
     merge_similarity: float = 0.82   # title+content term overlap to call two sources dupes
     refresh_delta: float = 0.05      # score must rise this much to count as "refreshed"
+    protect_sole_cover: bool = True  # never evict a source that is the SOLE cover for a
+    #                                  question term (ablation coverage guard) — a weak
+    #                                  score can't delete the only source of a sub-topic
 
 
 @dataclass
@@ -107,7 +110,7 @@ def _score_one(s: SourceFeatures, question: str, w: QualityWeights) -> float:
         w.authority * authority_score(s, w)
         + w.depth * depth_score(s, w)
         + w.recency * recency_score(s, w)
-        + w.relevance * relevance_score(s, qterms)
+        + w.relevance * relevance_score(s, qterms, w.term_expansions)
     ) / max(1e-9, (w.authority + w.depth + w.recency + w.relevance))
 
 
@@ -173,6 +176,24 @@ def plan_evolution(
     # 2) EVICT existing sources that have been weak too many times in a row,
     #    and MERGE existing sources that duplicate a stronger existing source.
     scored_existing.sort(key=lambda t: t[1], reverse=True)  # strongest first
+
+    # Ablation coverage guard: find sources that are the SOLE cover for a question
+    # term — removing one would strip a sub-topic the rest of the set cannot answer.
+    # These are protected from eviction (strike- and budget-based) regardless of score,
+    # so a weak standalone score never deletes the only source of a sub-topic.
+    qterms = _content_terms(question)
+    sole_cover: dict[str, list[str]] = {}
+    if pol.protect_sole_cover and qterms:
+        exp = w.term_expansions
+        term_coverers: dict[str, list[str]] = {}
+        for s in existing:
+            s_terms = _content_terms(f"{s.title} {s.content}")
+            for t in qterms:
+                if t in s_terms or (exp.get(t) and (exp[t] & s_terms)):
+                    term_coverers.setdefault(t, []).append(s.id)
+        for t, ids in term_coverers.items():
+            if len(ids) == 1:
+                sole_cover.setdefault(ids[0], []).append(t)
     survivors: list[tuple[SourceFeatures, float]] = []
     for s, eff in scored_existing:
         st = stats[s.id]
@@ -188,6 +209,15 @@ def plan_evolution(
             plan.merges += 1
             continue
         if st.strikes >= pol.evict_after_strikes:
+            if s.id in sole_cover:
+                plan.items.append(PlanItem(
+                    Action.KEEP, s.id, eff,
+                    f"weak (score {eff:.2f}) but SOLE cover for "
+                    f"{sole_cover[s.id]} — coverage guard prevents eviction"))
+                plan.kept += 1
+                # NOTE: intentionally NOT added to `survivors` — it already has its
+                # KEEP item; routing it through the budget step would emit a 2nd item.
+                continue
             plan.items.append(PlanItem(
                 Action.EVICT, s.id, eff,
                 f"weak (score {eff:.2f} < floor {pol.quality_floor}) for "
@@ -248,6 +278,13 @@ def plan_evolution(
                 f"above floor but over keep_budget ({pol.keep_budget}); not added"))
             plan.skips += 1
         else:
+            if s.id in sole_cover:
+                plan.items.append(PlanItem(
+                    Action.KEEP, s.id, eff,
+                    f"over keep_budget ({pol.keep_budget}) but SOLE cover for "
+                    f"{sole_cover[s.id]} — coverage guard keeps it"))
+                plan.kept += 1
+                continue
             plan.items.append(PlanItem(
                 Action.EVICT, s.id, eff,
                 f"over keep_budget ({pol.keep_budget}); lowest-ranked, budgeted out"))

@@ -171,3 +171,32 @@ series** — "this skill is regressing −0.04/run" is a claim you can check. `v
 Together these close the self-improvement loop: A/B picks a winner → the winner is used →
 its scores accrue in the ledger → evals flag when it starts regressing → evolution keeps
 the source corpus healthy underneath it.
+
+## How sparring ranks families (`research/sparring.py`) — and its known edges
+
+`run_sparring(question, prompt, families, runner)` runs the SAME prompt through
+several model families over the SAME question, scores each family's returned
+**source set** with the deterministic `score_sources` composite, and returns an
+attributed, ranked `SparringSession`. A family is judged on *what it retrieved*,
+not on prose — so the ranking is reproducible and token-free. Unavailable or
+crashing families are recorded, never allowed to sink the session.
+
+**Verified property — quality beats volume.** A family returning 2 authoritative
+sources beats one dumping 6 mid-tier same-domain sources (composite 0.699 vs 0.354
+on the probe fixtures). Authority dominates and the set-level `diversity` term
+*punishes* many near-identical low-authority hosts (its `distinct_ratio` scaling
+drives 6-blogs-one-shape toward 0). This closes the obvious gaming vector — you
+cannot win sparring by returning volume. Pinned by
+`tests/test_sparring_scoring_design.py::test_few_excellent_beats_many_mediocre`.
+
+**Known limitation — relevance is lexical.** `relevance_score` is question-term /
+source-content overlap. A genuinely on-topic source that uses *synonyms*
+("surface codes / fault tolerance" for "quantum error correction") scores **0.0**
+on relevance, which is weighted 0.20 in the composite — so real-world sources that
+don't lexically echo the query are systematically under-scored. This is documented
+and pinned (`::test_relevance_is_lexical_documented_limitation`) rather than
+silently patched, so a future semantic-relevance upgrade (embeddings / term
+expansion) is a deliberate, reviewed change instead of a silent shift across every
+historical ledger score. Until then, prefer questions that use the field's own
+vocabulary, or raise `authority`/`depth` weights relative to `relevance` via
+`QualityWeights` when a corpus is known to be synonym-heavy.

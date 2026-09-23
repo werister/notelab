@@ -7,8 +7,10 @@ Two jobs:
    agent CLIs (opencode, GitHub Copilot CLI, …) so a strategy is judged not on one
    model family's behaviour but on several, adversarially. Runners are PLUGGABLE and
    detected at runtime: whatever isn't installed is reported as `unavailable` and
-   skipped, never a hard failure. On this design we ship adapters for `opencode`
-   (present here) and `copilot` (skipped when absent); adding one is ~10 lines.
+   skipped, never a hard failure. We ship adapters for six agent CLIs — `opencode`,
+   `copilot`, `claude`, `codex`, `qoder` and `qwen` — each invoked one-shot; whichever
+   are absent are skipped. Adding another is ~1 line in KNOWN_RUNNERS (a `{prompt}`
+   placeholder in its args_template is required — see the guard in `run_adversary`).
 
 2. **Skill evals** — given a strategy's quality scores over successive runs, decide
    whether it is getting BETTER or WORSE. We use a simple, defensible trend test
@@ -82,6 +84,12 @@ def run_adversary(spec: RunnerSpec, prompt: str, timeout: int = 300,
     if not spec.available or not spec.path:
         return RunnerResult(spec.name, available=False,
                             skipped_reason=f"{spec.bin} not on PATH")
+    # Guard: a template with no {prompt} placeholder would silently run the agent
+    # with NO task, producing a meaningless "success". Refuse it as a recorded skip
+    # rather than emitting a false datapoint into the eval ledger.
+    if not any("{prompt}" in a for a in spec.args_template):
+        return RunnerResult(spec.name, available=True,
+                            skipped_reason="args_template has no {prompt} placeholder")
     args = [spec.path] + [a.replace("{prompt}", prompt) for a in spec.args_template]
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=cwd)

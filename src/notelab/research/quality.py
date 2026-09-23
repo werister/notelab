@@ -99,6 +99,11 @@ class QualityWeights:
     recency_halflife_days: float = 365.0  # smaller = more aggressively favor fresh
     depth_target_chars: int = 4000        # content length that scores ~1.0 on depth
     authority_overrides: dict[str, float] = field(default_factory=dict)  # domain -> 0..1
+    # question term -> set of synonym/related terms that ALSO count as covering it.
+    # Deterministic, config-driven semantic-lite matching (no embeddings/network):
+    # e.g. {"decoder": {"decoding", "bp", "mwpm"}}. A source covers the question term
+    # if it contains the term OR any of its expansions.
+    term_expansions: dict[str, set[str]] = field(default_factory=dict)
 
     def normalized(self) -> "QualityWeights":
         total = self.authority + self.diversity + self.recency + self.depth + self.relevance
@@ -113,6 +118,7 @@ class QualityWeights:
             recency_halflife_days=self.recency_halflife_days,
             depth_target_chars=self.depth_target_chars,
             authority_overrides=self.authority_overrides,
+            term_expansions=self.term_expansions,
         )
 
 
@@ -155,16 +161,21 @@ def recency_score(s: SourceFeatures, weights: QualityWeights) -> float:
     return 0.5 ** (age_days / max(1.0, weights.recency_halflife_days))
 
 
-def relevance_score(s: SourceFeatures, question_terms: set[str]) -> float:
+def relevance_score(s: SourceFeatures, question_terms: set[str],
+                    expansions: dict[str, set[str]] | None = None) -> float:
     if not question_terms:
         return 0.5
     text = f"{s.title} {s.content}"
     terms = _content_terms(text)
     if not terms:
         return 0.0
-    overlap = question_terms & terms
-    # coverage of the question's terms, lightly damped so one keyword != full marks
-    return len(overlap) / len(question_terms)
+    exp = expansions or {}
+    # a question term is covered if the source contains it OR any of its expansions
+    covered = 0
+    for qt in question_terms:
+        if qt in terms or (exp.get(qt) and (exp[qt] & terms)):
+            covered += 1
+    return covered / len(question_terms)
 
 
 def diversity_score(sources: list[SourceFeatures]) -> float:
@@ -237,7 +248,7 @@ def score_sources(
             authority=authority_score(s, w),
             depth=depth_score(s, w),
             recency=recency_score(s, w),
-            relevance=relevance_score(s, qterms),
+            relevance=relevance_score(s, qterms, w.term_expansions),
         ))
 
     n = len(per_source)

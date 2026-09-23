@@ -127,6 +127,23 @@ def test_missing_runner_is_skipped_not_raised():
     assert res.skipped_reason and "not on PATH" in res.skipped_reason
 
 
+def test_template_without_prompt_placeholder_is_skipped_not_run():
+    # A template lacking {prompt} would silently run the agent with no task and
+    # report a meaningless success. run_adversary must refuse it as a recorded skip.
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("bad", "sh", ["-c", "echo no-placeholder"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "the real prompt")
+    assert res.available is True
+    assert res.returncode is None          # never executed
+    assert res.skipped_reason and "{prompt}" in res.skipped_reason
+
+
+def test_registry_ships_all_six_families():
+    names = {r.name for r in detect_runners()}
+    assert {"opencode", "copilot", "claude", "codex", "qoder", "qwen"} <= names
+
+
 def test_trend_improving():
     e = eval_skill_trend("s", [0.30, 0.42, 0.55, 0.68])
     assert e.trend == Trend.IMPROVING
