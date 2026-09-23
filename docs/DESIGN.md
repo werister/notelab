@@ -118,6 +118,38 @@ free deterministic score, never a replacement for it.
   (`research/sparring.py`): several adversarial-runner CLIs (opencode, copilot, claude,
   codex, qoder, qwen) run the same question over one shared corpus; each family's result
   is scored and attributed, and the leaderboard ranks families by source quality.
+- **M5 — Source-value engine.** ✅ Does a source actually add value, beyond its standalone
+  score? `research/ablation.py`: leave-one-out `ablate_sources` (composite_delta +
+  coverage_delta, load-bearing/marginal/redundant), `find_redundant_pairs` (pairwise
+  interchangeable sources), `greedy_prune` (N-way redundancy collapse), and `quick_assess`
+  (fast O(n) lane wired into every `research_run_experiment` arm automatically, deep lane
+  on demand via `research_assess`). `evolve.py`'s coverage guard never evicts a source that
+  is the sole cover for a question term. Coverage/relevance is lexical by default
+  (`QualityWeights.term_expansions`, a hand-configured synonym map) — see
+  `docs/RESULTS-2026-09-23.md` for real NotebookLM evidence of what that misses, and
+  `research/semantic.py` for an optional real-embedding replacement (below).
+
+## Optional semantic term expansion (`research/semantic.py`)
+
+`QualityWeights.term_expansions` (a `{term: {synonyms}}` dict) is threaded through
+`relevance_score`, `ablation.py`'s coverage checks, and `evolve.py`'s coverage guard —
+wherever "does this source cover this question term" gets decided. The stdlib-only
+default leaves it empty (pure lexical matching, no network, no keys, works everywhere).
+
+`semantic_term_expansions(question, sources, ...)` computes the SAME shape of dict from
+real embeddings (Mistral's `mistral-embed`, over stdlib `urllib` — no new pip dependency)
+instead of a hand-maintained synonym list: a source counts as covering "decoder" because
+it's semantically close to "mwpm" or "surface code", not because someone remembered to add
+that pair to a config file. It's a pure drop-in — pass its result straight into
+`QualityWeights(term_expansions=...)`; nothing else changes.
+
+Gated, not wired in by default: nothing in `quality.py`/`ablation.py`/`evolve.py` imports
+`semantic.py`. Opt in explicitly, and set `MISTRAL_API_KEY` (or pass `api_key=`) — a
+missing key raises `SemanticExpansionError` rather than silently falling back to lexical,
+since a caller who asked for semantic expansion and got none needs to know why, not be
+quietly downgraded. `tests/test_semantic_expansions.py` covers the HTTP contract offline
+(mocked) plus one real live comparison test (skipped unless `MISTRAL_API_KEY` is set) that
+measures semantic vs. lexical coverage on an actual synonym-heavy source.
 
 ## Non-goals
 
