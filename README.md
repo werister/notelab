@@ -113,6 +113,7 @@ Register it with your agent (Claude Code example):
 | `research_history(experiment_id?, limit?)` | Browse the experiment ledger, or fetch one full result |
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
 | `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?)` | Self-evolving sources: plan create/merge/skip/evict + budget over a notebook's sources (OpenViking-style consolidation; evictions stay behind the confirm gate) |
+| `research_assess(notebook_id, question?, mode?)` | Value-assess a notebook's current sources: `fast` (cheap good/thin/bloated verdict + coverage gaps, the same check every `research_run_experiment` arm now runs automatically) or `deep` (full ablation + redundant-pairs + greedy-prune) |
 | `research_eval_skill(strategy_name)` | Is a strategy improving or regressing over its recorded history? OLS-slope trend + raw series |
 | `research_adversarial_run(prompt, runners?)` | Run a prompt through installed adversarial agent CLIs (opencode, copilot, claude, codex, qoder, qwen, …); missing ones skipped, not failed |
 | `catalog_sync(notebook_ids?)` | Index your notebooks + sources into the local catalog (the Obsidian-alternative index) |

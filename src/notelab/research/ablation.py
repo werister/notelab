@@ -283,7 +283,14 @@ def quick_assess(
         - "bloated"     full coverage but many sources — candidate for greedy_prune.
     mode="deep": defers to the full ablation + greedy pipeline (callers escalate here
     only when fast flags something), so easy tasks never pay the quadratic cost.
+
+    `mode` is case-insensitive but otherwise strict: anything besides "fast"/"deep"
+    raises rather than silently falling through to the cheap lane (sparring review
+    caught this — a typo like mode="Deep" must not silently downgrade to fast).
     """
+    mode = mode.lower()
+    if mode not in ("fast", "deep"):
+        raise ValueError(f"quick_assess: mode must be 'fast' or 'deep', got {mode!r}")
     w = weights or QualityWeights()
     qterms = _content_terms(question)
     exp = w.term_expansions
@@ -305,7 +312,12 @@ def quick_assess(
                 "greedy_prune": prune.as_dict()}
 
     # fast lane
-    if gaps or rep.quality_score < 0.45:
+    if not qterms:
+        # no question terms to check coverage against — a bare source/composite
+        # score can't honestly claim "good" or "bloated" (sparring review: an empty
+        # question was silently reporting "good" off composite/count alone).
+        verdict = "unassessable"
+    elif gaps or rep.quality_score < 0.45:
         verdict = "thin"
     elif len(sources) > max(3, 2 * max(1, len(qterms))):
         verdict = "bloated"

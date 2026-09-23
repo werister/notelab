@@ -1,7 +1,7 @@
 """
 Backend-agnostic tool registration.
 
-One definition of the 12 tools, bound onto the bundled stdlib stdio server
+One definition of the 13 tools, bound onto the bundled stdlib stdio server
 (`mcp_stdio.StdioMCPServer`). `server.py` can additionally bind the same callables
 onto the optional official SDK, but the bundled path here needs nothing but stdlib —
 that is what lets the package "fully load" without linking any external MCP repo.
@@ -17,6 +17,7 @@ from .catalog import search_catalog, sync_catalog
 from .mcp_stdio import StdioMCPServer
 from .nlmx_adapter import NlmxAdapter, NlmxError
 from .research.ab import Strategy, run_ab, suggest_next_prompt
+from .research.ablation import quick_assess
 from .research.evals import detect_runners, eval_skill_trend, run_adversary
 from .research.evolve import EvolutionPolicy, plan_evolution
 from .research.quality import QualityWeights, score_sources
@@ -112,6 +113,25 @@ class ToolLogic:
                       "applied: EVICT/MERGE sources removed via nlmx (--confirm)"
         return json.dumps(out, indent=2)
 
+    def assess_notebook(self, notebook_id: str, question: str = "", mode: str = "fast",
+                        weights: dict | None = None) -> str:
+        """Lightweight (fast) or full (deep) value assessment of an existing
+        notebook's CURRENT source set — same engine research_run_experiment wires
+        into every arm automatically, exposed here for on-demand / deep calls.
+
+        Content backfill is capped at 15 sources for the cheap fast lane (matches
+        score_notebook/evolve_notebook), but deep mode backfills ALL sources: it
+        already commits to the full O(n^2) ablation/pairwise/greedy-prune pipeline,
+        so silently scoring sources 16+ as contentless would corrupt exactly the
+        thorough result the caller asked for (sparring review caught this)."""
+        w = _weights_from(weights)
+        sources = self.adapter.list_sources(notebook_id)
+        to_fill = sources if mode.lower() == "deep" else sources[:15]
+        for s in to_fill:
+            if not s.content:
+                s.content = self.adapter.source_content(s.id)
+        return json.dumps(quick_assess(sources, question, weights=w, mode=mode), indent=2)
+
     def eval_skill(self, strategy_name: str) -> str:
         return json.dumps(eval_skill_trend(strategy_name,
                                            self.store.arm_scores(strategy_name)).as_dict(),
@@ -203,6 +223,9 @@ _SCHEMAS: dict[str, dict] = {
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
                        "keep_budget": {"type": "integer"}, "quality_floor": {"type": "number"},
                        "apply": {"type": "boolean"}}},
+    "research_assess": {"type": "object", "required": ["notebook_id"],
+        "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
+                       "mode": {"type": "string"}, "weights": {"type": "object"}}},
     "research_eval_skill": {"type": "object", "required": ["strategy_name"],
         "properties": {"strategy_name": {"type": "string"}}},
     "research_adversarial_run": {"type": "object", "required": ["prompt"],
@@ -230,6 +253,9 @@ _DESCRIPTIONS: dict[str, str] = {
         "same question.",
     "research_evolve_notebook": "Plan create/merge/skip/evict + budget over a notebook's "
         "sources (self-evolving; evictions stay behind the confirm gate).",
+    "research_assess": "Value-assess a notebook's current sources: mode='fast' (cheap, "
+        "good/thin/bloated + coverage gaps) or 'deep' (full ablation + redundant-pairs + "
+        "greedy-prune).",
     "research_eval_skill": "Is a strategy improving or regressing over its recorded history?",
     "research_adversarial_run": "Run a prompt through installed adversarial agent CLIs "
         "(opencode, copilot, …); missing ones are skipped, not failed.",
@@ -250,6 +276,7 @@ _BINDINGS = {
     "research_history": "history",
     "research_suggest_prompt": "suggest_prompt",
     "research_evolve_notebook": "evolve_notebook",
+    "research_assess": "assess_notebook",
     "research_eval_skill": "eval_skill",
     "research_adversarial_run": "adversarial_run",
     "catalog_sync": "catalog_sync",
@@ -261,7 +288,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 12 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 13 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():

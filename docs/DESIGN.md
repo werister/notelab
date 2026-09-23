@@ -63,7 +63,7 @@ the CLI path.
 
 **Zero-dependency MCP layer.** The MCP transport itself is bundled
 (`mcp_stdio.StdioMCPServer`) — a stdlib-only JSON-RPC-over-stdio implementation of the
-handshake + `tools/list` + `tools/call`. `_tools.py` defines the twelve tools once and binds
+handshake + `tools/list` + `tools/call`. `_tools.py` defines the thirteen tools once and binds
 them onto that bundled server (default) or, optionally, the official `mcp` SDK (`--sdk`,
 tolerant of 1.x `FastMCP` and 2.x `MCPServer`). The server fully loads and runs with
 `pip install .` and no third-party package.

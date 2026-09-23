@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
+from .ablation import quick_assess
 from .quality import QualityReport, QualityWeights, SourceFeatures, score_sources
 
 
@@ -40,6 +41,7 @@ class ArmResult:
     notebook_id: str | None = None
     task_id: str | None = None
     error: str | None = None
+    assessment: dict | None = None  # quick_assess(mode="fast") verdict on this arm's sources
 
     def as_dict(self) -> dict:
         return {
@@ -48,6 +50,7 @@ class ArmResult:
             "task_id": self.task_id,
             "error": self.error,
             "report": self.report.as_dict() if self.report else None,
+            "assessment": self.assessment,
         }
 
 
@@ -90,6 +93,11 @@ class Experiment:
             "winner": win.strategy.name if win else None,
             "winner_score": round(win.report.quality_score, 4) if win else None,
             "margin_over_runner_up": margin,
+            # the WINNING arm's fast verdict, not an experiment-wide judgment — every
+            # arm has its own "assessment" in "arms"; this key is named accordingly
+            # so callers can't mistake it for an aggregate (sparring review caught
+            # the ambiguity of a bare "assessment" key here).
+            "winner_assessment": win.assessment if win else None,
             "ranking": [
                 {"name": a.strategy.name,
                  "quality_score": round(a.report.quality_score, 4),
@@ -117,10 +125,21 @@ def run_ab(
         try:
             sources, meta = runner(strat)
             report = score_sources(sources, question=question, weights=w)
+            # fast lane only — cheap enough to run on every arm; deep is opt-in via
+            # research_assess. Computed on whatever sources/report came back, same
+            # as `report` above, even on a soft (meta["error"]) failure: an empty
+            # source list is itself informative ("thin"), not nothing. Isolated in
+            # its own try so a bug in the assessment engine can't masquerade as the
+            # RUNNER having failed and discard an otherwise-good arm (sparring
+            # review caught this coupling).
+            try:
+                assessment = quick_assess(sources, question, weights=w, mode="fast")
+            except Exception as e:  # pragma: no cover - defensive, see docstring above
+                assessment = {"error": f"{type(e).__name__}: {e}"}
             exp.arms.append(ArmResult(
                 strategy=strat, sources=sources, report=report,
                 notebook_id=meta.get("notebook_id"), task_id=meta.get("task_id"),
-                error=meta.get("error"),
+                error=meta.get("error"), assessment=assessment,
             ))
         except Exception as e:  # a failed arm must not sink the whole experiment
             exp.arms.append(ArmResult(

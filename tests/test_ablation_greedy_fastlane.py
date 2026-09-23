@@ -64,3 +64,22 @@ def test_quick_assess_deep_returns_full_pipeline():
     r = quick_assess(srcs, Q, mode="deep")
     assert r["mode"] == "deep"
     assert "ablation" in r and "redundant_pairs" in r and "greedy_prune" in r
+
+
+def test_quick_assess_rejects_unknown_mode():
+    import pytest
+    a = _s("A", "arxiv.org", "quantum error correction decoder")
+    with pytest.raises(ValueError):
+        quick_assess([a], Q, mode="quick")
+
+
+def test_quick_assess_mode_is_case_insensitive():
+    a = _s("A", "arxiv.org", "quantum error correction decoder")
+    assert quick_assess([a], Q, mode="FAST")["mode"] == "fast"
+    assert quick_assess([a], Q, mode="Deep")["mode"] == "deep"
+
+
+def test_quick_assess_fast_unassessable_on_empty_question():
+    a = _s("A", "arxiv.org", "quantum error correction decoder")
+    r = quick_assess([a], "", mode="fast")
+    assert r["verdict"] == "unassessable"

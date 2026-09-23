@@ -27,11 +27,11 @@ def _tmp_logic():
     return ToolLogic(adapter=StubAdapter(), store=store)
 
 
-def test_bundled_server_builds_with_all_nine_tools():
+def test_bundled_server_builds_with_all_thirteen_tools():
     srv = build_stdio_server(_tmp_logic())
     assert isinstance(srv, StdioMCPServer)
     assert set(srv.tools) == set(tool_names())
-    assert len(srv.tools) == 12
+    assert len(srv.tools) == 13
 
 
 def test_initialize_handshake():
@@ -76,6 +76,16 @@ def test_tools_call_score_notebook_with_stub_adapter():
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload["n_sources"] == 0
     assert payload["quality_score"] == 0.0
+
+
+def test_tools_call_research_assess_roundtrip():
+    srv = build_stdio_server(_tmp_logic())
+    resp = srv.handle({"jsonrpc": "2.0", "id": 41, "method": "tools/call",
+                       "params": {"name": "research_assess",
+                                  "arguments": {"notebook_id": "nb1", "question": "x"}}})
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload["mode"] == "fast"
+    assert payload["n_sources"] == 0
 
 
 def test_tools_call_adversarial_run_detects_or_skips():
