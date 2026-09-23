@@ -63,7 +63,7 @@ the CLI path.
 
 **Zero-dependency MCP layer.** The MCP transport itself is bundled
 (`mcp_stdio.StdioMCPServer`) — a stdlib-only JSON-RPC-over-stdio implementation of the
-handshake + `tools/list` + `tools/call`. `_tools.py` defines the nine tools once and binds
+handshake + `tools/list` + `tools/call`. `_tools.py` defines the twelve tools once and binds
 them onto that bundled server (default) or, optionally, the official `mcp` SDK (`--sdk`,
 tolerant of 1.x `FastMCP` and 2.x `MCPServer`). The server fully loads and runs with
 `pip install .` and no third-party package.
@@ -111,9 +111,13 @@ free deterministic score, never a replacement for it.
 - **M2 — Catalog.** ✅ `catalog_sync` / `catalog_search`: the Obsidian-alternative index
   over all notebooks + sources (SQLite + FTS5), so an agent asks "what do we already know
   about X" before researching. Sync is per-notebook fault-tolerant; search is full-text.
-- **M3 — Strategy memory.** Winners feed prompt suggestions; per-topic tuned weight profiles.
-- **M4 — Multi-family sparring.** Session/attribution so Claude / Gemini / DeepSeek etc. run
-  their own strategies over one shared corpus and the ledger records who found the best sources.
+- **M3 — Strategy memory.** ✅ `research_learn_topic` (`research/strategy.py`): winners feed
+  rule-based prompt mutations (authority/recency/breadth/depth) plus a per-topic tuned
+  weight profile, nudged toward the signals the winning sources actually scored high on.
+- **M4 — Multi-family sparring.** ✅ `research_spar` / `research_family_leaderboard`
+  (`research/sparring.py`): several adversarial-runner CLIs (opencode, copilot, claude,
+  codex, qoder, qwen) run the same question over one shared corpus; each family's result
+  is scored and attributed, and the leaderboard ranks families by source quality.
 
 ## Non-goals
 

@@ -1,7 +1,7 @@
 """
 Backend-agnostic tool registration.
 
-One definition of the 9 tools, bound onto the bundled stdlib stdio server
+One definition of the 12 tools, bound onto the bundled stdlib stdio server
 (`mcp_stdio.StdioMCPServer`). `server.py` can additionally bind the same callables
 onto the optional official SDK, but the bundled path here needs nothing but stdlib —
 that is what lets the package "fully load" without linking any external MCP repo.
@@ -261,7 +261,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 9 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 12 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():

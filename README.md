@@ -114,9 +114,12 @@ Register it with your agent (Claude Code example):
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
 | `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?)` | Self-evolving sources: plan create/merge/skip/evict + budget over a notebook's sources (OpenViking-style consolidation; evictions stay behind the confirm gate) |
 | `research_eval_skill(strategy_name)` | Is a strategy improving or regressing over its recorded history? OLS-slope trend + raw series |
-| `research_adversarial_run(prompt, runners?)` | Run a prompt through installed adversarial agent CLIs (opencode, copilot, …); missing ones skipped, not failed |
+| `research_adversarial_run(prompt, runners?)` | Run a prompt through installed adversarial agent CLIs (opencode, copilot, claude, codex, qoder, qwen, …); missing ones skipped, not failed |
 | `catalog_sync(notebook_ids?)` | Index your notebooks + sources into the local catalog (the Obsidian-alternative index) |
 | `catalog_search(query, limit?)` | Full-text search the index — "what do we already know about X" — before researching again |
+| `research_learn_topic(topic)` | M3 strategy memory: turn a topic's experiment history into next-round prompt mutations + a tuned weight profile |
+| `research_spar(question, families?, weights?)` | M4 multi-family sparring: run the same question through several model-family CLIs over one shared corpus, score and attribute each |
+| `research_family_leaderboard(topic?)` | Rank model families by source quality — which family finds the best sources for which kind of question |
 
 ### Design & roadmap
 
