@@ -25,6 +25,11 @@ pytest -q                   # offline
 python examples/self_improving_loop.py   # see the whole loop, no account needed
 ```
 
+The suite reports `N passed, 1 skipped`: that one skip is
+`test_live_semantic_beats_lexical_coverage_on_synonym_heavy_fixture`, a live network
+test gated on a real `MISTRAL_API_KEY` (see `-ra` output for the reason). It's expected
+to skip in CI and on a fresh checkout — it isn't a broken test.
+
 ## Adding an adversarial runner
 
 Append a `RunnerSpec` to `KNOWN_RUNNERS` in `research/evals.py` with the binary name

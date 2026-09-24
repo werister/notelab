@@ -81,13 +81,6 @@ def main():
         print(f"recorded experiment #{exp_id}")
         winners = store.prior_winners(question)
         print(f"suggested prompt next time: {suggest_next_prompt(winners)!r}")
-
-        rule("4. Evals — is the 'authoritative' strategy improving or regressing?")
-        # simulate a score history accruing in the ledger over several runs
-        history = [0.34, 0.41, 0.49, 0.58, 0.66]
-        ev = eval_skill_trend("authoritative", history)
-        print(f"trend: {ev.trend.value}  ({ev.verdict})")
-        print(f"scores: {ev.as_dict()['scores']}")
         store.close()
 
     rule("3. Evolve — curate the notebook's sources (create/merge/skip/evict)")
@@ -112,6 +105,13 @@ def main():
             extra = f" -> {item.get('merges_with')}" if item.get("merges_with") else ""
             print(f"  {item['action']:<7} {item['source_id']:<10} "
                   f"score={item['score']:<7}{extra}  # {item['reason']}")
+
+    rule("4. Evals — is the 'authoritative' strategy improving or regressing?")
+    # simulate a score history accruing in the ledger over several runs
+    history = [0.34, 0.41, 0.49, 0.58, 0.66]
+    ev = eval_skill_trend("authoritative", history)
+    print(f"trend: {ev.trend.value}  ({ev.verdict})")
+    print(f"scores: {ev.as_dict()['scores']}")
 
 
 if __name__ == "__main__":
