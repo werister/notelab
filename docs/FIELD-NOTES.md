@@ -89,7 +89,7 @@ behavior on a large batch response, not something `nlmx` caused; a real fix mean
 re-checking actual source count after a reported import error before deciding to propagate
 failure, which is more than a one-line change and wasn't warranted for one observed instance.
 
-### 8. `research_assess(mode="deep")`'s ablation epsilon is only usable at N=2 sources
+### 8. `research_assess(mode="deep")`'s ablation epsilon is only usable at N=2 sources — FIXED 2026-09-24
 Leave-one-out ablation (`ablate_sources`) classifies a source "redundant" when removing it
 drops the composite by less than `composite_eps=0.02` (2%) and loses no question-coverage.
 The composite is a plain per-source **mean** across N sources, so removing one shifts each
@@ -114,11 +114,32 @@ the ablation had something obvious to find:
 The fixed 0.02 threshold only clears the bar at N=2. By N=3, even a 10x-stronger source can't
 push its own removal past a static 2% composite move, because one-of-three is inherently ~⅓
 of the mean's weight at most and shrinks further with N. This isn't a narrow edge case — it's
-the common case for any real notebook (most hold well over 3 sources). Not fixed here: the
-right fix is a genuine design call (scale `composite_eps` by something like `k/N`, or switch to
-a relative/percentile ranking of deltas across the source set rather than a fixed absolute
-threshold), not a one-line patch, and needs calibration against real data at several N rather
-than a guess.
+the common case for any real notebook (most hold well over 3 sources).
+
+**Fix applied**: rather than the k/N-scaling or percentile-ranking ideas above (both still
+just a different arbitrary threshold), added an opt-in Laya-based tie-breaker
+(`research/laya_judge.py`, `use_laya=True`) for exactly the ambiguous zone this bug exposed —
+sources with a clear signal never touch it, only the ones the fixed epsilon can't
+distinguish. Full design: `docs/superpowers/specs/2026-09-24-laya-ablation-judge-design.md`
+(reviewed by sc:spec-panel + GitHub Copilot before implementation — both caught real gaps,
+including a verdict-string bug and a missing wiring path, fixed before merge).
+
+Getting Laya's own question design right took real iteration, not a first-try success — worth
+recording since it's the same "verify, don't assume" discipline this whole document is about.
+The first design asked a direct binary `choice` ("is this redundant or load-bearing, given what
+the rest of the set covers") — live-tested, it came back a near coin-flip (52/48, confidence
+<0.02) regardless of how differentiated the sources actually were, across three different
+fixture attempts. Redesigned to a `score`-type question asking Laya to rate each source's own
+specificity (concrete facts vs. vague restatement) independently, with a threshold on the
+result — same checkpoint, same fixture, this shape gave a clean, confident, correct signal
+(a source with real names/numbers/policy details scored ~2.0/3 "mostly specific"; generic
+keyword-restatement filler scored ~0.6 "vague").
+
+**Verified live** on the real 41-source notebook this gap was originally diagnosed on:
+`research_assess(mode="deep", use_laya=true)` took 128.4s (all 41 sources landed in the
+ambiguous zone — Laya was consulted for every one), and returned **29 load-bearing / 12
+redundant** — a real, differentiated split, not the original all-41-`redundant` result, and not
+a suspicious all-load-bearing rubber stamp either.
 
 ### 9. `research_spar`'s "model families" never actually run through their named CLI
 The module docstring and tool description ("run one prompt across model families... which

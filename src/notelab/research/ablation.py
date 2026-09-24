@@ -18,13 +18,19 @@ A source is REDUNDANT (safe-to-cut) when removing it barely moves either axis; i
 LOad-BEARING (keep) when removing it drops coverage or composite meaningfully. This
 gives `evolve.py` an evidence-based evict/keep signal instead of standalone score.
 
-Deterministic + offline: reuses `quality.score_sources`. No network, no keys.
+Deterministic and offline BY DEFAULT: reuses `quality.score_sources`. No network,
+no keys, unless the caller opts into `use_laya=True` (research/laya_judge.py) — a
+network-backed, non-deterministic tie-breaker for the specific ambiguous zone a
+fixed epsilon threshold can't classify past a few sources (see FIELD-NOTES.md gap
+#8). `evolve.py` consumes these verdicts for evict/keep decisions — anyone relying
+on ablation being reproducible should know `use_laya=True` changes that.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
 
+from . import laya_judge
 from .quality import (
     QualityWeights, SourceFeatures, score_sources, _content_terms,
 )
@@ -60,13 +66,18 @@ class SourceValue:
     coverage_delta: float    # how much question-coverage DROPS if removed
     sole_cover_terms: list[str]  # question terms ONLY this source covers
     verdict: str             # "load-bearing" | "redundant" | "marginal"
+    judge_confidence: float | None = None  # set only when use_laya consulted Laya
+                                            # for this source's verdict
 
     def as_dict(self) -> dict:
-        return {"id": self.id,
-                "composite_delta": round(self.composite_delta, 4),
-                "coverage_delta": round(self.coverage_delta, 4),
-                "sole_cover_terms": self.sole_cover_terms,
-                "verdict": self.verdict}
+        d = {"id": self.id,
+             "composite_delta": round(self.composite_delta, 4),
+             "coverage_delta": round(self.coverage_delta, 4),
+             "sole_cover_terms": self.sole_cover_terms,
+             "verdict": self.verdict}
+        if self.judge_confidence is not None:
+            d["judge_confidence"] = round(self.judge_confidence, 4)
+        return d
 
 
 @dataclass
@@ -98,14 +109,29 @@ def ablate_sources(
     weights: QualityWeights | None = None,
     composite_eps: float = 0.02,   # composite drop below this = negligible
     coverage_eps: float = 1e-9,    # any coverage loss at all = load-bearing
+    use_laya: bool = False,
 ) -> AblationReport:
     """Leave-one-out ablation. For each source, recompute composite + coverage over
     the set WITHOUT it, and classify:
       - load-bearing: removing it loses question-coverage (sole cover for a term),
         OR drops composite by more than composite_eps;
-      - redundant:    removing it changes neither axis beyond eps;
+      - redundant:    removing it changes neither axis beyond eps (or, with
+        use_laya=True, Laya judges it redundant for this specific ambiguous case);
       - marginal:     small composite drop but no coverage loss.
+
+    use_laya=True: composite_delta shrinks as ~1/N by construction (it's a
+    leave-one-out shift in a MEAN over N sources), so the fixed composite_eps only
+    reliably classifies at N=2 (verified: FIELD-NOTES.md gap #8). For sources that
+    land in that ambiguous zone, ask Laya (research/laya_judge.py) instead of
+    defaulting to "redundant" unconditionally. Sources with a clear signal (real
+    coverage loss, or a delta that clears the threshold on its own) never touch
+    Laya. Raises LayaJudgeError immediately if use_laya=True and laya-mlx isn't
+    installed, before any work starts.
     """
+    if use_laya and not laya_judge.laya_available():
+        raise laya_judge.LayaJudgeError(
+            "use_laya=True but laya-mlx is not installed — pip install 'notelab[laya]'")
+
     w = weights or QualityWeights()
     qterms = _content_terms(question)
     exp = w.term_expansions
@@ -126,13 +152,19 @@ def ablate_sources(
         mine = _covered_terms(s, qterms, exp)
         sole = sorted(mine - others_cover)
 
+        judge_confidence = None
         if v_delta > coverage_eps or sole:
             verdict = "load-bearing"
         elif c_delta <= composite_eps:
-            verdict = "redundant"
+            if use_laya:
+                judgment = laya_judge.judge_redundancy(s, rest, question)
+                verdict = judgment.verdict
+                judge_confidence = judgment.confidence
+            else:
+                verdict = "redundant"
         else:
             verdict = "marginal"
-        out.append(SourceValue(s.id, c_delta, v_delta, sole, verdict))
+        out.append(SourceValue(s.id, c_delta, v_delta, sole, verdict, judge_confidence))
 
     return AblationReport(question, len(sources), full.quality_score, full_cov, out)
 
@@ -272,6 +304,7 @@ def quick_assess(
     question: str,
     weights: QualityWeights | None = None,
     mode: str = "fast",
+    use_laya: bool = False,
 ) -> dict:
     """Lightweight lane for easy tasks / quick improvements.
 
@@ -283,6 +316,8 @@ def quick_assess(
         - "bloated"     full coverage but many sources — candidate for greedy_prune.
     mode="deep": defers to the full ablation + greedy pipeline (callers escalate here
     only when fast flags something), so easy tasks never pay the quadratic cost.
+    `use_laya` only applies here — ignored (not an error) in fast mode, which
+    never calls ablate_sources at all.
 
     `mode` is case-insensitive but otherwise strict: anything besides "fast"/"deep"
     raises rather than silently falling through to the cheap lane (sparring review
@@ -302,7 +337,7 @@ def quick_assess(
     gaps = sorted(qterms - covered)
 
     if mode == "deep":
-        abl = ablate_sources(sources, question, weights=w)
+        abl = ablate_sources(sources, question, weights=w, use_laya=use_laya)
         pairs = find_redundant_pairs(sources, question, weights=w)
         prune = greedy_prune(sources, question, weights=w)
         return {"mode": "deep", "composite": round(rep.quality_score, 4),

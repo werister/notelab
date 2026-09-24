@@ -21,6 +21,10 @@ dependencies = []
 # third-party deps at all.
 mcp = ["mcp<2"]
 dev = ["pytest>=7.0"]
+# Optional: the Laya ablation tie-breaker (research/laya_judge.py, FIELD-NOTES.md
+# gap #8). NOT required — use_laya defaults to False, the stdlib-only default path
+# is completely unaffected by this extra existing.
+laya = ["laya-mlx"]
 
 [project.scripts]
 nlm-research-mcp = "notelab.server:main"
