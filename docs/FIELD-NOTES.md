@@ -234,6 +234,70 @@ fix's inline rationale, and the Laya singleton + pinned-revision pattern as "exe
 "exactly right" — independent confirmation that the design decisions from earlier gaps in this
 document hold up under a fresh, uninstructed read, not just self-assessment.
 
+### 12. Back-to-back `nlmx research run` on the same notebook silently duplicates the FIRST
+query's sources instead of running the SECOND — NOT FIXED
+Hit live while seeding a fresh notebook for `[redacted-private-project]` research (2026-09-24): ran
+`nlmx research run "<query 1>" --notebook-id <nb> --mode deep --source web`, which completed
+normally and imported 65 new sources (21 → 86). Immediately ran a **second**
+`nlmx research run "<query 2>" --notebook-id <nb> --mode deep --source web` against the **same**
+notebook. The internal `nlm research start` call detected a prior research task NotebookLM still
+considered pending/unconsumed and printed an interactive conflict prompt:
+```
+Warning: Previous research completed with sources not yet imported.
+  Task ID: 00000000-0000-4000-8000-000000000000
+  Sources available: 66
+Starting new research will discard existing results.
+Continue and start new research? [y/N]:
+```
+Piped `y` in non-interactively (reasonable, since the notebook's source count already showed the
+prior batch had in fact been imported — 86, matching 21+65 exactly). Confirming did **not** just
+discard stale state and move on: it (or the subsequent status/import chain) **re-imported query
+1's exact source list a second time** — 65 exact duplicate titles/URLs, notebook count 86 → 151 —
+while query 2 ("detecting bugs/regressions in AI-agent code changes...") **never actually ran**:
+the polled `nlm research status --task-id <query-2's-token> --max-wait 1200` returned
+`Status: completed` in well under a second (impossible for a real ~5 min deep pass) and reported
+the **same** `Task ID: <redacted>` / `Sources found: 66` as query 1's status check, not a status
+for query 2 at all. `nlmx` had no way to detect this — it trusted "completed" and imported, so the
+caller sees a clean `✓ Research started / Query: <query 2 text>` banner with no error, but the
+notebook only ever received duplicates of query 1.
+
+**Root cause (best evidence, not confirmed against nlm's server internals):** `nlm research
+start`'s printed `Task ID:` is an opaque RPC continuation token (e.g.
+`ChBmYWtlLWV4YW1wbGUtdG9rZW6PAQAaATMqA3Vzcg==`); `nlm research status`/`research import` report and key
+off a *different*, human-readable UUID-style task id (e.g. `00000000-0000-...`). These two id
+spaces are never reconciled anywhere in the CLI output, so `nlmx`'s
+`re.search(r"Task ID:\s*(\S+)", ...)` — which extracts the opaque token from `start`'s stdout and
+passes it straight to `status --task-id` / `import <task_id>` — is passing an id those commands
+don't actually recognize. NotebookLM appears to track only **one current research slot per
+notebook**; `status`/`import` without a *matching* id silently fall back to reporting/importing
+that one slot's most recent state rather than erroring on an unrecognized id, which is what makes
+this silent instead of a clean failure.
+
+**Consequence:** any workflow that calls `nlmx research run` more than once against the same
+notebook without a real wait in between (a natural pattern — asking a notebook several distinct
+research questions in sequence, exactly what this session was doing) risks silently duplicating
+the first query's sources instead of running later queries, with a misleading success banner and
+no error signal. Recovery required manually diffing `nlm source list --json` by URL, then deleting
+duplicates.
+
+**Also found in the same session, same recovery**: `nlm source delete <id1> <id2> ... --confirm`
+fails **silently** (`Error: Failed to delete source(s).`, no further detail, exit reflects failure)
+for anything beyond a single id — verified single-id delete succeeds 100% of the time, an 8-id
+batch fails 100% of the time. No batch size was found that works; recovery required looping
+one-id-at-a-time deletes (64 individual calls, all succeeded, just slow).
+
+**Fix directions (documented, not implemented):**
+1. Before starting new research on a notebook, `nlmx` should proactively `research import` any
+   pending prior task itself (governed by its own ledger, like `cmd_research_import` already does
+   for the normal case) rather than piping a bare `y` through `nlm`'s interactive prompt, whose
+   side effects `nlmx` doesn't fully control.
+2. `nlmx`/`nlm` need one consistent task-id representation across `start` → `status` → `import`,
+   or `nlmx` should re-resolve the real id via a `status --max-wait 0` call immediately after
+   `start` rather than trusting the id `start` prints.
+3. `nlm source delete` bulk mode needs a workaround (delete one id per call) until root-caused
+   upstream — silent failure with no diagnostic on anything past a single id is a trap for any
+   caller that assumes the documented `<id1> <id2> <id3>` bulk form works.
+
 ## Why this matters for the repo's own thesis
 This repo's pitch is *comparing source DATA QUALITY and A/B-testing prompts for deep research*
 (`docs/DESIGN.md`). Two of the gaps above (2 and 3) directly affect that: a stale-id 404 or a
