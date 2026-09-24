@@ -163,12 +163,7 @@ class ToolLogic:
         best_prompt = winners[0] if winners else None
         means = self.store.winner_signal_means(question)
         runs = self.store.experiment_count(question)
-        # best_score: the top arm score of the latest experiment, if any
-        best_score = 0.0
-        latest = self.store.list_experiments(1)
-        for e in latest:
-            if e["question"] == question and e.get("winner_score"):
-                best_score = e["winner_score"]
+        best_score = self.store.latest_winner_score(question)
         profile = profile_from_history(question, best_prompt, best_score, means, runs)
         self.store.upsert_topic_profile(profile.as_dict())
         strategies = suggest_strategies(question, best_prompt, explore=explore)

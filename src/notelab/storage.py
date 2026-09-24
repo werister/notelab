@@ -9,6 +9,7 @@ catalog is the M2 Obsidian-alternative index (schema created now, populated late
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 CREATE INDEX IF NOT EXISTS idx_sources_notebook ON sources(notebook_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts
-    USING fts5(id, title, url);
+    USING fts5(id, title, url, tokenize='porter unicode61 remove_diacritics 2');
 
 -- M3 strategy memory: one tuned profile per research topic (question).
 CREATE TABLE IF NOT EXISTS topic_profiles (
@@ -101,7 +102,29 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)
+        self._migrate_fts_tokenizer()
         self.conn.commit()
+
+    def _migrate_fts_tokenizer(self) -> None:
+        """`CREATE VIRTUAL TABLE IF NOT EXISTS` won't retrofit a tokenizer change onto
+        an existing db file (found live: an early catalog_search test on real data
+        returned 0 hits for "PSD2 aggregator" despite 5 exact "PSD2" hits and 2 exact
+        "aggregators" hits -- singular/plural weren't matching). If sources_fts wasn't
+        built with the porter tokenizer, drop and rebuild it from `sources` (the FTS
+        index is fully derived, so this loses nothing)."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'sources_fts'"
+        ).fetchone()
+        if row and "porter" in (row["sql"] or ""):
+            return
+        self.conn.execute("DROP TABLE IF EXISTS sources_fts")
+        self.conn.execute(
+            "CREATE VIRTUAL TABLE sources_fts USING fts5(id, title, url, "
+            "tokenize='porter unicode61 remove_diacritics 2')"
+        )
+        self.conn.execute(
+            "INSERT INTO sources_fts (id, title, url) SELECT id, title, url FROM sources"
+        )
 
     # --- experiment ledger ------------------------------------------------------
 
@@ -135,6 +158,19 @@ class Store:
             (question, limit),
         ).fetchall()
         return [r["prompt"] for r in rows]
+
+    def latest_winner_score(self, question: str) -> float:
+        """Winner score of the most recent experiment FOR THIS QUESTION (not the most
+        recent experiment overall -- found live: research_learn_topic's best_score was
+        silently 0.0 for a topic with a real recorded 0.6553 winner, because the caller
+        used list_experiments(1) -- the single latest experiment across ALL topics --
+        and only used it if it happened to match this question)."""
+        row = self.conn.execute(
+            "SELECT winner_score FROM experiments WHERE question = ? "
+            "AND winner_score IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (question,),
+        ).fetchone()
+        return row["winner_score"] if row else 0.0
 
     def arm_scores(self, strategy_name: str, limit: int = 50) -> list[float]:
         """Quality scores for a strategy across experiments, OLDEST→newest, so a trend
@@ -274,11 +310,27 @@ class Store:
         return [dict(r) for r in rows]
 
     def search_sources(self, query: str, limit: int = 20) -> list[dict]:
+        """Full-text search titles/urls. Terms are OR'd with a trailing prefix match
+        each (found live: FTS5's default is an implicit AND of every term, so a
+        natural query like "PSD2 aggregator" returned 0 rows against real data that
+        plainly had both words -- one term not matching killed the whole query. This
+        catalog exists so an agent can check "do we already know about X" before
+        spending a real Deep Research run; a false "no results" defeats that, an
+        over-broad result list doesn't -- so OR + prefix optimizes for recall)."""
+        # split on anything that isn't a word character, not just whitespace -- FTS5's
+        # query parser treats bare '-' as NOT (found live: "robo-advisor" unquoted was
+        # parsed as "robo AND NOT advisor*", not one token, killing every match even
+        # after the AND/stemming fix above), and the unicode61 indexer tokenizes the
+        # same way on the write side, so this keeps query- and index-side splitting
+        # consistent instead of just working around one operator.
+        terms = [t for t in re.split(r"\W+", query) if t]
+        fts_query = " OR ".join(f'{t}*' for t in terms) if terms else query
         try:
             rows = self.conn.execute(
                 "SELECT s.id, s.notebook_id, s.title, s.url, s.domain "
                 "FROM sources_fts f JOIN sources s ON s.id = f.id "
-                "WHERE sources_fts MATCH ? LIMIT ?", (query, limit),
+                "WHERE sources_fts MATCH ? ORDER BY bm25(sources_fts) LIMIT ?",
+                (fts_query, limit),
             ).fetchall()
             return [dict(r) for r in rows]
         except sqlite3.OperationalError:

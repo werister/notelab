@@ -69,6 +69,28 @@ def test_run_experiment_end_to_end_then_history_and_suggest():
     assert len(learned["suggested_strategies"]) >= 2  # winner + explore
 
 
+def test_learn_topic_best_score_is_per_topic_not_global_latest():
+    """Regression: learn_topic's best_score must come from the latest experiment FOR
+    THIS QUESTION, not the latest experiment overall. Found live: research_learn_topic
+    reported best_score=0.0 for a topic with a real, recorded winner, because a later
+    unrelated experiment on a different question had since become the global-latest
+    row. Reproduce that ordering here: run topic A, then a different topic B, then
+    ask learn_topic about A -- its own score must still be found."""
+    logic = _logic()
+    out = json.loads(logic.run_experiment(
+        "quantum error correction",
+        [{"name": "authoritative", "prompt": "find authoritative primary sources"}]))
+    assert out["winner_score"] > 0
+
+    # an unrelated, later experiment on a different question
+    logic.run_experiment(
+        "a completely different topic",
+        [{"name": "authoritative", "prompt": "find authoritative primary sources"}])
+
+    learned = json.loads(logic.learn_topic("quantum error correction"))
+    assert learned["profile"]["best_score"] == out["winner_score"]
+
+
 def test_run_experiment_accepts_preset_weights():
     logic = _logic()
     out = json.loads(logic.run_experiment(

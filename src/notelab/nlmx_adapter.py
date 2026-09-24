@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -45,7 +46,8 @@ def _resolve_nlmx() -> str:
 @dataclass
 class NlmxAdapter:
     bin_path: str | None = None
-    timeout: int = 900  # deep research can be slow
+    timeout: int = 1500  # deep research can be slow; must stay above nlmx's own
+    # internal max_wait for deep mode (1200s) plus room for the import step after
 
     def __post_init__(self):
         self.bin_path = self.bin_path or _resolve_nlmx()
@@ -62,13 +64,16 @@ class NlmxAdapter:
     # --- primitives -------------------------------------------------------------
 
     def create_notebook(self, title: str) -> str:
-        r = self._run(["notebook", "create", title, "--quiet"], timeout=120)
+        # `nlm notebook create` has no --quiet/--json; output is two lines:
+        # "✓ Created notebook: <title>" then "  ID: <uuid>". Parse the id out of that,
+        # don't assume the id is the bare last line.
+        r = self._run(["notebook", "create", title], timeout=120)
         if r.returncode != 0:
             raise NlmxError(f"notebook create failed: {r.stderr.strip() or r.stdout.strip()}")
-        nb_id = r.stdout.strip().splitlines()[-1].strip() if r.stdout.strip() else ""
-        if not nb_id:
-            raise NlmxError("notebook create returned no id")
-        return nb_id
+        m = re.search(r"ID:\s*(\S+)", r.stdout)
+        if not m:
+            raise NlmxError(f"notebook create returned no parseable id: {r.stdout.strip()!r}")
+        return m.group(1)
 
     def list_notebooks(self) -> list[dict]:
         """List notebooks as [{id, title}, ...]. Tolerates JSON or plain output."""
@@ -103,8 +108,13 @@ class NlmxAdapter:
     def remove_source(self, notebook_id: str, source_id: str) -> tuple[bool, str]:
         """Remove one source from a notebook. Returns (ok, message). Destructive — only
         called by the plan executor when the caller has explicitly confirmed. Passes
-        --confirm since nlmx/nlm gate deletes on it."""
-        r = self._run(["source", "remove", notebook_id, source_id, "--confirm"], timeout=120)
+        --confirm since nlmx/nlm gate deletes on it.
+
+        `notebook_id` is unused: `nlm source delete` (not `remove`) takes only source
+        id(s), no notebook scope. Kept in the signature since callers pass it and
+        source ids aren't guaranteed globally unique across notebooks in general use.
+        """
+        r = self._run(["source", "delete", source_id, "--confirm"], timeout=120)
         ok = r.returncode == 0
         return ok, (r.stdout.strip() or r.stderr.strip() or ("removed" if ok else "failed"))
 

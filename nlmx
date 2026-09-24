@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 NLM = str(Path.home() / ".local/bin/nlm")
@@ -98,7 +99,7 @@ def cmd_research_import(args):
         )
 
     ledger[key] = {
-        "imported_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "imported_at": datetime.now(timezone.utc).isoformat(),
         "count_before": before,
         "count_after": after,
     }
@@ -137,7 +138,10 @@ def cmd_research_run(args):
         die("could not parse Task ID from `research start` output — inspect manually")
     task_id = m.group(1)
 
-    max_wait = "60" if mode == "fast" else "600"
+    # 600s was measured too short for a real multi-topic deep-research question (two
+    # runs both completed server-side well past that mark, forcing a manual
+    # `research status`/`research import` recovery) — see docs/FIELD-NOTES.md gap #1.
+    max_wait = "60" if mode == "fast" else "1200"
     status_r = run(["research", "status", notebook_id, "--task-id", task_id, "--max-wait", max_wait], capture=True)
     print(status_r.stdout, end="")
     if "completed" not in status_r.stdout.lower():
