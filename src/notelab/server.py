@@ -49,7 +49,28 @@ def _try_build_sdk_server():
         ) from e
 
 
+_USAGE = """\
+usage: nlm-research-mcp [--help] [--sdk]
+
+Starts the notelab MCP server over stdio (JSON-RPC) — no output on a TTY by
+design, it blocks waiting for an MCP client's requests on stdin. Register it
+with an MCP client (e.g. Claude Code) rather than running it directly to watch
+output.
+
+  --sdk     Use the official MCP SDK if installed (mcp<2), instead of the
+            bundled stdlib-only server. Not required.
+  --help    Show this message and exit.
+"""
+
+
 def main():  # pragma: no cover
+    # Found live (blind third-party test): with no arg handling beyond --sdk,
+    # `nlm-research-mcp --help` silently started the server and hung waiting on
+    # stdin instead of showing usage -- confusing for anyone's first command
+    # against a fresh install.
+    if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
+        print(_USAGE, end="")
+        return
     if "--sdk" in sys.argv[1:]:
         _try_build_sdk_server().run()
     else:

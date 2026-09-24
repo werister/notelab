@@ -159,6 +159,43 @@ option. Not fixed here — routing each family through its own actual CLI (rathe
 would be a real feature build, not a bug fix; flagging so the "leaderboard" isn't trusted as
 real model-family comparison until it is.
 
+### 10. Blind third-party validation (qoder, zero prior context) — `--help` bug FIXED, three real gaps documented
+Per request: gave `qoder` (a coding-agent CLI with zero context on this repo or conversation) a
+fresh `git clone` and one instruction — get it running, use its own tooling to research a real
+question ("FastAPI vs. Flask for a small team in 2026"), report what happened. This is the
+closest thing to the PR #6 "would a stranger's agent actually be able to use this repo"
+question this repo has had, answered by an actual stranger rather than a self-check.
+
+**The core pipeline genuinely works for a stranger**: it self-onboarded (independently
+rediscovered the `uv` workaround for the broken system-Python `pyexpat` issue), correctly used
+`research_run_experiment` with sensibly-named strategies, got a real synthesized answer, and
+persisted a real ledger entry (experiment #5). That's a substantive, independently-earned
+result, not just "it ran."
+
+**Fixed**: `nlm-research-mcp --help` printed nothing and silently started the server (hung on
+stdin) instead of showing usage — `server.py::main()` only ever checked for `--sdk`, any other
+arg fell through to `build_stdio_server().serve_forever()`. Added a `--help`/`-h` check with a
+real usage message, tested (`tests/test_server_cli.py`).
+
+**Not fixed, documented**:
+- `catalog_search` returned unrelated existing-account results for "FastAPI Flask Python API" —
+  plausibly the OR+prefix-match recall fix in gap #6/storage.py trading precision for recall on
+  short, common English terms; not confirmed root-caused, flagging for follow-up rather than
+  guessing at a fix.
+- Authority scoring gave Wikipedia **0.95** and the *official* FastAPI/Flask documentation only
+  **0.5** in this real run — the winning arm's 45-source corpus included unrelated AI docs, a
+  corporate PDF, and CVE material despite explicit anti-SEO instructions in the prompt, and
+  `quick_assess` correctly flagged it "bloated" but `research_run_experiment` still declared it
+  the winner on raw composite score. `quality.py`'s authority heuristic doesn't recognize a
+  question's own official-docs domain as higher-authority than a general encyclopedia — a real
+  scoring-quality gap, not a bug with an obvious one-line fix (same class of "needs real
+  calibration" as gap #8 was before the Laya fix).
+- Real onboarding friction, independent of the doc fixes already shipped (PR #6 etc.): multiple
+  external prerequisites (a working Python, `pipx`/`nlm`, browser auth, `nlmx` on PATH, an MCP
+  client) still have to be assembled by hand; no single skill/script captures "get this whole
+  stack running" in one step. qoder's own recommendation: a project-level environment-setup
+  skill, plus source-set relevance filtering before ranking rather than after.
+
 ## Why this matters for the repo's own thesis
 This repo's pitch is *comparing source DATA QUALITY and A/B-testing prompts for deep research*
 (`docs/DESIGN.md`). Two of the gaps above (2 and 3) directly affect that: a stale-id 404 or a
