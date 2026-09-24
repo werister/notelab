@@ -23,7 +23,7 @@ mcp = ["mcp<2"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-notelab = "notelab.server:main"
+nlm-research-mcp = "notelab.server:main"
 
 [project.urls]
 Homepage = "https://github.com/werister/notelab"

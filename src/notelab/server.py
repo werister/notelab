@@ -45,7 +45,7 @@ def _try_build_sdk_server():
         raise SystemExit(
             "The official MCP SDK is not installed (tried mcp 1.x FastMCP and 2.x "
             "MCPServer). Run without --sdk to use the bundled stdlib server, or "
-            "`pip install 'nlm-research-mcp[mcp]'`."
+            "`pip install -e '.[mcp]'` from a clone of this repo (not published to PyPI)."
         ) from e
 
 

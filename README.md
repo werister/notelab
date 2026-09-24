@@ -16,14 +16,15 @@ duplicate or lose your sources.
 
 - **Engine + MCP server are stdlib-only** — `pip install .` gives a runnable server with
   zero third-party dependencies (bundled JSON-RPC stdio MCP, no external SDK required).
-- **67 offline tests**, no NotebookLM account needed to run them. CI on py3.10/3.12/3.13.
+- **126 offline tests** (plus 1 optional live test needing a free Mistral API key), no
+  NotebookLM account needed to run them. CI on py3.10/3.12/3.13.
 - **See the whole loop in 5 seconds:** `python examples/self_improving_loop.py`
 
 ---
 
 ## 🧪 The research server — self-improving deep research
 
-[![tests](https://github.com/werister/nlm-agent-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/werister/nlm-agent-guard/actions/workflows/tests.yml)
+[![tests](https://github.com/werister/notelab/actions/workflows/tests.yml/badge.svg)](https://github.com/werister/notelab/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/engine-stdlib--only-informational)
@@ -97,6 +98,30 @@ the quality scorer, A/B ranking, self-evolving planner, evals, the catalog index
 the whole MCP protocol layer — is bundled in this repo and runs with no external
 NotebookLM install. Tools degrade with a clear error when `nlmx` isn't present rather
 than failing to load.
+
+`nlmx` is a thin wrapper around the upstream
+[`notebooklm-mcp-cli`](https://pypi.org/project/notebooklm-mcp-cli/) (`nlm`) — it does
+not reimplement auth or the NotebookLM API, so `nlm` itself has to be installed and
+logged in first, before `nlmx`/this server can do anything real:
+
+```bash
+# 1. Install the upstream nlm CLI (isolated tool install, not into this venv)
+pipx install notebooklm-mcp-cli      # or: uv tool install notebooklm-mcp-cli
+nlm --version                        # confirms it's on PATH
+
+# 2. Authenticate once — launches a browser, extracts + saves session cookies
+nlm login
+nlm login --check                    # confirms the session is valid
+
+# 3. Now install the guard this server actually calls (see "nlmx" below)
+cp nlmx ~/.local/bin/nlmx && chmod +x ~/.local/bin/nlmx
+```
+
+Saved cookies are typically good for weeks; re-run `nlm login` if a tool call reports
+expired/invalid auth. `nlm` remains the source of truth for authentication — see
+[jacob-bd/notebooklm-mcp-cli](https://github.com/jacob-bd/notebooklm-mcp-cli) for its
+own docs, and `skills/nlm-skill/SKILL.md` in this repo for the fuller auth-recovery
+flow (used by agents, not just humans).
 
 Register it with your agent (Claude Code example):
 
