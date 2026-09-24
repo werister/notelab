@@ -196,6 +196,44 @@ real usage message, tested (`tests/test_server_cli.py`).
   stack running" in one step. qoder's own recommendation: a project-level environment-setup
   skill, plus source-set relevance filtering before ranking rather than after.
 
+### 11. Second blind review round (Kiro, fresh clone, post-merge) — two real `nlmx` bugs FIXED
+Ran a second independent blind review after gap #10's round of merges — `kiro-cli`, zero prior
+context, fresh clone, asked for a genuine code review plus a real research task on a topic
+unrelated to anything tried before (CRDT vs. operational-transform sync for a 2026 collaborative
+editor, to check research quality on a fresh domain). In parallel, gave `qoder` a second, distinct
+task focused specifically on the newly-merged Laya feature.
+
+**Fixed, both in `nlmx` itself:**
+- `NLM` (the path to the real `nlm` binary) was hardcoded to `~/.local/bin/nlm` with no
+  fallback — `NlmxAdapter` (the Python side) already resolves its own binary via `NLMX_BIN` env
+  / `PATH` / `~/.local/bin`, but `nlmx` never applied the same logic to the `nlm` binary it
+  wraps. A `pipx`/`uv tool install` landing `nlm` somewhere else would make every `nlmx` call
+  silently target a path with nothing there. Fixed with the same resolution order the adapter
+  already uses (`NLM_BIN` env → `PATH` → `~/.local/bin` fallback).
+- `cmd_research_import` wrote a "successfully imported" ledger entry **unconditionally**,
+  regardless of whether the underlying `nlm research import` call actually succeeded. A genuine
+  failure (network error, invalid task, zero sources added) still got recorded as done — the
+  *next* legitimate retry would hit the "already imported, pass --force" guard and die(), even
+  though nothing had actually landed. Fixed: only write the ledger entry when the exit code
+  says success **or** the source count actually grew (the second condition matters because of
+  gap #7 — a *real* success can still report a nonzero exit on an HTTP read timeout after the
+  data already landed, so exit code alone isn't trustworthy in either direction).
+
+**Design observations, not fixed** (Kiro's review, real but lower-priority):
+`evolve.py`'s sole-cover coverage guard emits a KEEP plan item for a source without adding it
+to `survivors`, making it invisible to budget-ranking if `keep_budget` is tight; `storage.py`'s
+FTS tokenizer migration check re-queries `sqlite_master` on every `Store()` construction (cheap,
+but a "migration done" flag would avoid it entirely); `_STOPWORDS` doesn't exclude
+coverage-irrelevant words like "more"/"approaches", so `quick_assess`'s coverage-gap list can
+include meaningless terms. None of these are wrong enough to block anything — flagged for a
+future pass.
+
+**Positive, worth recording**: Kiro's unprompted assessment called out the `plan_evolution`
+(pure) / `apply_plan` (confirm-gated) separation, the injected-fake testability pattern, the FTS
+fix's inline rationale, and the Laya singleton + pinned-revision pattern as "exemplary" /
+"exactly right" — independent confirmation that the design decisions from earlier gaps in this
+document hold up under a fresh, uninstructed read, not just self-assessment.
+
 ## Why this matters for the repo's own thesis
 This repo's pitch is *comparing source DATA QUALITY and A/B-testing prompts for deep research*
 (`docs/DESIGN.md`). Two of the gaps above (2 and 3) directly affect that: a stale-id 404 or a

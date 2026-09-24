@@ -21,12 +21,33 @@ Everything else passes straight through to `nlm`, unmodified.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-NLM = str(Path.home() / ".local/bin/nlm")
+
+def _resolve_nlm() -> str:
+    """Found in a fresh third-party code review: this used to be a hardcoded
+    ~/.local/bin/nlm with no fallback. NlmxAdapter (nlmx_adapter.py) already
+    resolves its OWN binary (nlmx) via NLMX_BIN env / PATH / ~/.local/bin — this
+    mirrors that same pattern for nlm, since a pipx/uv-tool install that lands
+    nlm somewhere else would otherwise make every nlmx call silently target a
+    path with nothing there."""
+    env = os.environ.get("NLM_BIN")
+    if env and os.path.exists(env):
+        return env
+    found = shutil.which("nlm")
+    if found:
+        return found
+    home_bin = os.path.expanduser("~/.local/bin/nlm")
+    if os.path.exists(home_bin):
+        return home_bin
+    return home_bin  # let the first real `nlm` call surface the real not-found error
+
+
+NLM = _resolve_nlm()
 LEDGER_PATH = Path.home() / ".local/state/nlmx/imported.json"
 
 GENERATION_TYPES = {
@@ -98,12 +119,31 @@ def cmd_research_import(args):
             file=sys.stderr,
         )
 
-    ledger[key] = {
-        "imported_at": datetime.now(timezone.utc).isoformat(),
-        "count_before": before,
-        "count_after": after,
-    }
-    save_ledger(ledger)
+    # Found in a fresh third-party code review: this used to write the ledger
+    # unconditionally, so a genuinely FAILED import (network error, invalid
+    # task, nothing added) permanently blocked any future retry -- the next
+    # attempt would hit the "already imported" guard above and die(), even
+    # though nothing had actually landed. But exit code alone isn't reliable
+    # either way (see docs/FIELD-NOTES.md gap #7: a *successful* import can
+    # report a nonzero exit on an HTTP read timeout after the data already
+    # landed) -- so treat it as a real import if EITHER the exit code says so
+    # OR the source count actually grew; only skip the ledger write when
+    # neither signal indicates anything happened.
+    grew = before is not None and after is not None and after > before
+    if result.returncode == 0 or grew:
+        ledger[key] = {
+            "imported_at": datetime.now(timezone.utc).isoformat(),
+            "count_before": before,
+            "count_after": after,
+        }
+        save_ledger(ledger)
+    else:
+        print(
+            "[nlmx] import did not appear to succeed (exit "
+            f"{result.returncode}, source count unchanged at {after}) — "
+            "NOT recording in the ledger, safe to retry without --force.",
+            file=sys.stderr,
+        )
     sys.exit(result.returncode)
 
 
