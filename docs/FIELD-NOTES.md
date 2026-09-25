@@ -298,6 +298,18 @@ one-id-at-a-time deletes (64 individual calls, all succeeded, just slow).
    upstream — silent failure with no diagnostic on anything past a single id is a trap for any
    caller that assumes the documented `<id1> <id2> <id3>` bulk form works.
 
+**Companion finding, same session**: once the notebook above had grown to ~218 sources (the 21
+seed sources plus 4 deep-research imports), `nlm query notebook` (the chat/synthesis endpoint,
+separate from `research start`/`import`) became unreliable — `Connection reset by peer` and read
+timeouts, including on a **trivial, non-grounded** control query ("say hello in one word"),
+ruling out "the real question is too expensive to answer" as the sole explanation. Scoping every
+query to a small, topic-relevant set of source ids via `--source-ids` (4–6 ids instead of all 218)
+was reliably successful — first or second attempt every time, vs. 3–5 failures per unscoped
+attempt on the same notebook. Not root-caused (client-side timeout vs. a real server-side limit
+on large-notebook chat context is unconfirmed either way), but the workaround is simple and
+worth documenting: **once a notebook accumulates 100+ sources from repeated `research run` calls,
+prefer `--source-ids`-scoped queries over whole-notebook queries.**
+
 ## Why this matters for the repo's own thesis
 This repo's pitch is *comparing source DATA QUALITY and A/B-testing prompts for deep research*
 (`docs/DESIGN.md`). Two of the gaps above (2 and 3) directly affect that: a stale-id 404 or a
