@@ -35,7 +35,8 @@ class FamilyResult:
     def as_dict(self) -> dict:
         return {"family": self.family, "available": self.available,
                 "error": self.error,
-                "report": self.report.as_dict() if self.report else None}
+                "report": self.report.as_dict() if self.report else None,
+                "sources": [{"id": s.id, "url": s.url} for s in self.sources]}
 
 
 # family -> (sources, meta). meta may carry {"available": bool, "error": str}.

@@ -12,6 +12,7 @@ MCP text content.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from .catalog import search_catalog, sync_catalog
 from .mcp_stdio import StdioMCPServer
@@ -21,6 +22,7 @@ from .research.ablation import quick_assess
 from .research.evals import detect_runners, eval_skill_trend, run_adversary
 from .research.evolve import EvolutionPolicy, plan_evolution
 from .research.quality import QualityWeights, score_sources
+from .research.sparring import _sources_from_adversary_output, run_sparring
 from .storage import Store
 
 
@@ -36,6 +38,10 @@ def _weights_from(d) -> QualityWeights:
             return QualityWeights()
     valid = {k: v for k, v in d.items() if k in QualityWeights.__dataclass_fields__}
     return QualityWeights(**valid)
+
+
+def _notelab_repo_root() -> str:
+    return str(Path(__file__).resolve().parents[2])
 
 
 class ToolLogic:
@@ -181,21 +187,25 @@ class ToolLogic:
         record per-family attribution, and return the ranked compare view.
 
         A family participates only if its adversarial CLI is installed (detected at
-        runtime); unavailable families are recorded as such. The actual research goes
-        through the nlmx path (isolated notebook per family)."""
-        from .research.evals import detect_runners
-        from .research.sparring import run_sparring
-        detected = {r.name: r.available for r in detect_runners()}
-        fams = families or list(detected.keys())
+        runtime); unavailable families are recorded as such. Each available family's
+        research goes through ITS OWN CLI via run_adversary -- not a shared
+        NotebookLM path. Fixes FIELD-NOTES.md gap #9: previously every family routed
+        through the identical `self.adapter.research_run(...)` call regardless of
+        which CLI was detected, so the "which family finds the best sources" ranking
+        never actually compared model families at all."""
+        specs = {s.name: s for s in detect_runners()}
+        fams = families or list(specs.keys())
 
         def family_runner(family: str, p: str):
-            if not detected.get(family, False):
+            spec = specs.get(family)
+            if spec is None or not spec.available:
                 return [], {"available": False, "error": f"{family} not installed"}
-            from .research.ab import Strategy
-            sources, meta = self.adapter.research_run(
-                Strategy(name=f"spar-{family}", prompt=p))
-            meta["available"] = True
-            return sources, meta
+            result = run_adversary(spec, p, timeout=180, cwd=_notelab_repo_root())
+            if result.timed_out:
+                return [], {"available": True, "error": "timed out"}
+            sources = _sources_from_adversary_output(result, question=p)
+            return sources, {"available": True,
+                             "error": result.stderr[:300] if result.returncode else None}
 
         session = run_sparring(question, prompt, fams, runner=family_runner)
         result = session.as_dict()
