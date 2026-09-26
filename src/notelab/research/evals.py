@@ -134,8 +134,21 @@ def run_adversary(spec: RunnerSpec, prompt: str, timeout: int = 300,
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except ProcessLookupError:
             pass
-        proc.communicate()  # reap the (now-dead) process, avoid a zombie
+        try:
+            # Bounded reap: if a grandchild escaped the process group (e.g. called
+            # its own setsid), don't hang here waiting for it too.
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
         return RunnerResult(spec.name, True, None, timed_out=True)
+    except Exception as e:  # pragma: no cover - defensive, preserves the never-raises
+                            # contract for anything communicate() can raise besides a
+                            # timeout (e.g. a UnicodeDecodeError on non-UTF8 output).
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            pass
+        return RunnerResult(spec.name, True, None, stderr=f"{type(e).__name__}: {e}")
 
 
 # --- skill trend evals ----------------------------------------------------------
