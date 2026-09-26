@@ -59,7 +59,11 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # session with no one to approve a tool call fails that call safely rather than
     # silently granting it — a research call never needs write trust regardless.
     RunnerSpec("muse", "muse", ["exec", "{prompt}"]),
-    RunnerSpec("cline", "cline", ["--auto-approve", "false", "{prompt}"]),
+    # cline's default model draws on Cline Credits (pay-per-token, confirmed live
+    # at a near-empty balance); pinned to a ClinePass model instead -- a separate
+    # flat-subscription pool with its own usage limits, confirmed live working.
+    RunnerSpec("cline", "cline", ["--auto-approve", "false",
+                                  "-m", "cline-pass/glm-5.3-flash", "{prompt}"]),
     # kilo's DEFAULT model needs paid credits ("Add credits to continue, or
     # switch to a free model" -- confirmed live); pinned to an explicit free
     # model or every dispatch fails before reaching the research question.
