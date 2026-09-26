@@ -16,9 +16,11 @@ production it wraps the adversarial CLIs + the nlmx research path.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .evals import RunnerResult
 from .quality import QualityReport, QualityWeights, SourceFeatures, score_sources
 
 
@@ -38,6 +40,33 @@ class FamilyResult:
 
 # family -> (sources, meta). meta may carry {"available": bool, "error": str}.
 FamilyRunner = Callable[[str, str], tuple[list[SourceFeatures], dict]]
+
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _sources_from_adversary_output(result: RunnerResult, question: str) -> list[SourceFeatures]:
+    """Turn one adversarial CLI's raw stdout into SourceFeatures score_sources() can
+    rank. Real answers rarely come back as structured JSON -- extract cited URLs with
+    a bounded content snippet around each; if the CLI answered in prose with no links
+    at all, that's still a real (if weaker) outcome, not a non-event, so the whole
+    stdout becomes one sourceless SourceFeatures rather than an empty list. A
+    genuinely empty answer still yields an empty list -- there is nothing to score."""
+    text = result.stdout or ""
+    urls = _URL_RE.findall(text)
+    if not urls:
+        if not text.strip():
+            return []
+        return [SourceFeatures(id=f"{result.runner}-0", title=f"{result.runner} answer",
+                               url="", content=text[:2000])]
+    out = []
+    for i, url in enumerate(urls):
+        idx = text.find(url)
+        start = max(0, idx - 200)
+        end = min(len(text), idx + len(url) + 200)
+        out.append(SourceFeatures(id=f"{result.runner}-{i}", title=f"{result.runner} source {i}",
+                                  url=url, content=text[start:end]))
+    return out
 
 
 @dataclass
