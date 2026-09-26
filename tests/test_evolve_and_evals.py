@@ -1,5 +1,6 @@
 """Tests for self-evolving sources + skill trend evals — offline, deterministic."""
 from datetime import datetime, timedelta, timezone
+import time
 
 from notelab.research.evals import (
     Trend,
@@ -164,6 +165,28 @@ def test_cwd_placeholder_is_substituted_when_cwd_given(tmp_path):
     res = run_adversary(spec, "hello", cwd=str(tmp_path))
     assert res.returncode == 0
     assert marker.read_text().strip() == str(tmp_path.resolve())
+
+
+def test_timeout_kills_process_group_including_grandchildren(tmp_path):
+    from notelab.research.evals import RunnerSpec
+    # The child backgrounds a grandchild that touches `marker` 5s from now. A timeout
+    # that only kills the direct child leaves this grandchild running; a real
+    # process-group kill takes it down too, so `marker` must never appear.
+    marker = tmp_path / "grandchild_alive"
+    script = tmp_path / "spawn.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"(sleep 5; touch {marker}) &\n"
+        "sleep 5\n"
+    )
+    script.chmod(0o755)
+    spec = RunnerSpec("spawner", str(script), ["{prompt}"], available=True, path=str(script))
+
+    res = run_adversary(spec, "unused", timeout=1)
+    assert res.timed_out is True
+
+    time.sleep(2)  # T+3s total; the grandchild only fires its marker at T+5s if alive
+    assert not marker.exists(), "grandchild survived the timeout kill"
 
 
 def test_research_runners_never_carry_write_trust_flags():
