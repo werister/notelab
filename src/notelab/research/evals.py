@@ -46,6 +46,15 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # qoder (@qoder-ai/qodercli) and qwen (QwenLM/qwen-code): headless one-shot verified.
     RunnerSpec("qoder", "qoder", ["-p", "{prompt}"]),
     RunnerSpec("qwen", "qwen", ["{prompt}"]),
+    # muse/cline/kilo/kiro-cli: research-only, deliberately NO auto-approve/trust flag.
+    # A research call never needs write trust, so omitting these flags means each
+    # tool's own DEFAULT (conservative) permission mode applies, and a headless
+    # session with no one to approve a tool call fails that call safely rather than
+    # silently granting it.
+    RunnerSpec("muse", "muse", ["exec", "{prompt}"]),
+    RunnerSpec("cline", "cline", ["--auto-approve", "false", "{prompt}"]),
+    RunnerSpec("kilo", "kilo", ["run", "{prompt}"]),
+    RunnerSpec("kiro-cli", "kiro-cli", ["chat", "{prompt}", "--no-interactive"]),
 ]
 
 

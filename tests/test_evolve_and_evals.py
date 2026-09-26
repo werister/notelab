@@ -139,9 +139,19 @@ def test_template_without_prompt_placeholder_is_skipped_not_run():
     assert res.skipped_reason and "{prompt}" in res.skipped_reason
 
 
-def test_registry_ships_all_six_families():
+def test_registry_ships_all_ten_families():
     names = {r.name for r in detect_runners()}
-    assert {"opencode", "copilot", "claude", "codex", "qoder", "qwen"} <= names
+    assert {"opencode", "copilot", "claude", "codex", "qoder", "qwen",
+            "muse", "cline", "kilo", "kiro-cli"} <= names
+
+
+def test_research_runners_never_carry_write_trust_flags():
+    # Component A only ever asks a research question -- it must never be handed a
+    # flag that grants an agent filesystem write trust.
+    dangerous = {"--yolo", "--auto", "-a", "--trust-all-tools"}
+    for r in detect_runners():
+        assert not (dangerous & set(r.args_template)), \
+            f"{r.name} carries a write-trust flag in the research-only runner table"
 
 
 def test_trend_improving():
