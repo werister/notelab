@@ -145,6 +145,27 @@ def test_registry_ships_all_ten_families():
             "muse", "cline", "kilo", "kiro-cli"} <= names
 
 
+def test_template_with_cwd_placeholder_and_no_cwd_given_is_skipped():
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("needs-cwd", "sh", ["-c", "{prompt}", "{cwd}"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "echo hi")  # no cwd= passed
+    assert res.available is True
+    assert res.returncode is None          # never executed
+    assert res.skipped_reason and "{cwd}" in res.skipped_reason
+
+
+def test_cwd_placeholder_is_substituted_when_cwd_given(tmp_path):
+    from notelab.research.evals import RunnerSpec
+    marker = tmp_path / "cwd-seen.txt"
+    spec = RunnerSpec("echo-cwd", "sh",
+                      ["-c", f"pwd > {marker}; echo {{prompt}}"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "hello", cwd=str(tmp_path))
+    assert res.returncode == 0
+    assert marker.read_text().strip() == str(tmp_path.resolve())
+
+
 def test_research_runners_never_carry_write_trust_flags():
     # Component A only ever asks a research question -- it must never be handed a
     # flag that grants an agent filesystem write trust.

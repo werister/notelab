@@ -22,6 +22,8 @@ Two jobs:
 """
 from __future__ import annotations
 
+import os
+import signal
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -94,7 +96,11 @@ def run_adversary(spec: RunnerSpec, prompt: str, timeout: int = 300,
                   cwd: str | None = None) -> RunnerResult:
     """Invoke one adversarial agent CLI on `prompt`. Never raises — a missing or
     failing runner is a recorded result, not an exception, so an eval over several
-    runners is robust to any one of them being absent or broken."""
+    runners is robust to any one of them being absent or broken.
+
+    On timeout, kills the CHILD'S WHOLE PROCESS GROUP (start_new_session=True +
+    killpg), not just the direct child -- a CLI's own spawned grandchildren (browser
+    automation, an LSP server) would otherwise survive undetected past the timeout."""
     if not spec.available or not spec.path:
         return RunnerResult(spec.name, available=False,
                             skipped_reason=f"{spec.bin} not on PATH")
@@ -104,14 +110,32 @@ def run_adversary(spec: RunnerSpec, prompt: str, timeout: int = 300,
     if not any("{prompt}" in a for a in spec.args_template):
         return RunnerResult(spec.name, available=True,
                             skipped_reason="args_template has no {prompt} placeholder")
-    args = [spec.path] + [a.replace("{prompt}", prompt) for a in spec.args_template]
+    needs_cwd = any("{cwd}" in a for a in spec.args_template)
+    if needs_cwd and not cwd:
+        return RunnerResult(spec.name, available=True,
+                            skipped_reason="args_template has {cwd} but no cwd was given")
+    args = [spec.path]
+    for a in spec.args_template:
+        a = a.replace("{prompt}", prompt)
+        if needs_cwd:
+            a = a.replace("{cwd}", cwd)
+        args.append(a)
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=cwd)
-        return RunnerResult(spec.name, True, r.returncode, r.stdout, r.stderr)
-    except subprocess.TimeoutExpired:
-        return RunnerResult(spec.name, True, None, timed_out=True)
+        proc = subprocess.Popen(args, cwd=cwd, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
     except Exception as e:  # pragma: no cover - defensive
         return RunnerResult(spec.name, True, None, stderr=f"{type(e).__name__}: {e}")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return RunnerResult(spec.name, True, proc.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()  # reap the (now-dead) process, avoid a zombie
+        return RunnerResult(spec.name, True, None, timed_out=True)
 
 
 # --- skill trend evals ----------------------------------------------------------
