@@ -203,9 +203,16 @@ class ToolLogic:
             result = run_adversary(spec, p, timeout=180, cwd=_notelab_repo_root())
             if result.timed_out:
                 return [], {"available": True, "error": "timed out"}
+            if result.skipped_reason:
+                return [], {"available": True, "error": result.skipped_reason}
             sources = _sources_from_adversary_output(result, question=p)
-            return sources, {"available": True,
-                             "error": result.stderr[:300] if result.returncode else None}
+            # returncode == 0 is the only real-success case. A nonzero code is a
+            # real process error; None means run_adversary hit an exception path
+            # (Popen spawn failure, a communicate() exception) -- both carry a real
+            # diagnostic in stderr and must NOT be treated the same as "no error"
+            # just because None and 0 are both falsy.
+            error = None if result.returncode == 0 else (result.stderr[:300] or "unknown error")
+            return sources, {"available": True, "error": error}
 
         session = run_sparring(question, prompt, fams, runner=family_runner)
         result = session.as_dict()

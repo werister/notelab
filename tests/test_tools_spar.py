@@ -62,3 +62,35 @@ def test_spar_records_unavailable_family_without_calling_run_adversary(monkeypat
     tool = ToolLogic(adapter=object(), store=_FakeStore())
     out = json.loads(tool.spar("q", "p"))
     assert out["results"][0]["available"] is False
+
+
+def test_spar_surfaces_error_when_returncode_is_none_not_zero(monkeypatch):
+    # run_adversary returns returncode=None (not just on a timeout) on a Popen/
+    # communicate() exception path -- `if result.returncode` alone can't tell that
+    # apart from a clean returncode=0 success, since both are falsy. This must
+    # surface the real stderr, not silently report a clean empty success.
+    specs = [RunnerSpec("muse", "muse", ["exec", "{prompt}"], available=True, path="/x/muse")]
+    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+
+    def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
+        return RunnerResult(spec.name, True, None, stdout="", stderr="FileNotFoundError: gone")
+
+    monkeypatch.setattr(tools_mod, "run_adversary", fake_run_adversary)
+
+    tool = ToolLogic(adapter=object(), store=_FakeStore())
+    out = json.loads(tool.spar("q", "p"))
+    assert out["results"][0]["error"] == "FileNotFoundError: gone"
+
+
+def test_spar_surfaces_skipped_reason_instead_of_reporting_success(monkeypatch):
+    specs = [RunnerSpec("kiro-cli", "kiro-cli", [], available=True, path="/x/kiro-cli")]
+    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+
+    def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
+        return RunnerResult(spec.name, True, None, skipped_reason="no {prompt} placeholder")
+
+    monkeypatch.setattr(tools_mod, "run_adversary", fake_run_adversary)
+
+    tool = ToolLogic(adapter=object(), store=_FakeStore())
+    out = json.loads(tool.spar("q", "p"))
+    assert out["results"][0]["error"] == "no {prompt} placeholder"
