@@ -60,10 +60,15 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # silently granting it — a research call never needs write trust regardless.
     RunnerSpec("muse", "muse", ["exec", "{prompt}"]),
     # cline's default model draws on Cline Credits (pay-per-token, confirmed live
-    # at a near-empty balance); pinned to a ClinePass model instead -- a separate
-    # flat-subscription pool with its own usage limits, confirmed live working.
+    # at a near-empty balance). ClinePass ($9.99/mo subscription) works too, but
+    # cline-free/* is genuinely $0 -- no subscription, no credits balance touched
+    # at all -- and most cost-efficient wins. Confirmed live working. Free-tier
+    # promos rotate (docs.cline.bot's own warning; confirmed live: solar-pro4's
+    # had already ended); muse-spark-1.3-contributor is a second confirmed-free
+    # fallback if deepseek-v4.1-flash rotates out. Last resort:
+    # cline-pass/glm-5.3-flash (paid subscription, but the account has one).
     RunnerSpec("cline", "cline", ["--auto-approve", "false",
-                                  "-m", "cline-pass/glm-5.3-flash", "{prompt}"]),
+                                  "-m", "cline-free/deepseek-v4.1-flash", "{prompt}"]),
     # kilo's DEFAULT model needs paid credits ("Add credits to continue, or
     # switch to a free model" -- confirmed live); pinned to an explicit free
     # model or every dispatch fails before reaching the research question.
