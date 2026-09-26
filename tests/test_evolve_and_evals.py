@@ -169,14 +169,17 @@ def test_cwd_placeholder_is_substituted_when_cwd_given(tmp_path):
 
 def test_timeout_kills_process_group_including_grandchildren(tmp_path):
     from notelab.research.evals import RunnerSpec
-    # The child backgrounds a grandchild that touches `marker` 5s from now. A timeout
-    # that only kills the direct child leaves this grandchild running; a real
-    # process-group kill takes it down too, so `marker` must never appear.
+    # The child backgrounds a grandchild that touches `marker` ~2s after the parent's
+    # own 1s timeout fires. The check below MUST happen after that T+2s deadline, not
+    # before it: if it ran too early (as an earlier version of this test did, with a
+    # T+5s deadline checked at T+3s), the marker would legitimately not exist yet
+    # regardless of whether the process-group kill worked at all -- a tautological
+    # test that passes even with a real regression to killing only the direct child.
     marker = tmp_path / "grandchild_alive"
     script = tmp_path / "spawn.sh"
     script.write_text(
         "#!/bin/sh\n"
-        f"(sleep 5; touch {marker}) &\n"
+        f"(sleep 2; touch {marker}) &\n"
         "sleep 5\n"
     )
     script.chmod(0o755)
@@ -185,7 +188,7 @@ def test_timeout_kills_process_group_including_grandchildren(tmp_path):
     res = run_adversary(spec, "unused", timeout=1)
     assert res.timed_out is True
 
-    time.sleep(2)  # T+3s total; the grandchild only fires its marker at T+5s if alive
+    time.sleep(2.5)  # T+3.5s total; past the grandchild's T+2s deadline, with margin
     assert not marker.exists(), "grandchild survived the timeout kill"
 
 
