@@ -7,10 +7,13 @@ Two jobs:
    agent CLIs (opencode, GitHub Copilot CLI, …) so a strategy is judged not on one
    model family's behaviour but on several, adversarially. Runners are PLUGGABLE and
    detected at runtime: whatever isn't installed is reported as `unavailable` and
-   skipped, never a hard failure. We ship adapters for six agent CLIs — `opencode`,
-   `copilot`, `claude`, `codex`, `qoder` and `qwen` — each invoked one-shot; whichever
-   are absent are skipped. Adding another is ~1 line in KNOWN_RUNNERS (a `{prompt}`
-   placeholder in its args_template is required — see the guard in `run_adversary`).
+   skipped, never a hard failure. We ship adapters for ten agent CLIs — `opencode`,
+   `copilot`, `claude`, `codex`, `qoder`, `qwen`, `muse`, `cline`, `kilo` and
+   `kiro-cli` — each invoked one-shot, research-only (never given write trust; see
+   the swarm design spec for the separate, worktree-isolated write-capable lane).
+   Whichever are absent are skipped. Adding another is ~1 line in KNOWN_RUNNERS (a
+   `{prompt}` placeholder in its args_template is required — see the guard in
+   `run_adversary`).
 
 2. **Skill evals** — given a strategy's quality scores over successive runs, decide
    whether it is getting BETTER or WORSE. We use a simple, defensible trend test
@@ -46,11 +49,13 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # qoder (@qoder-ai/qodercli) and qwen (QwenLM/qwen-code): headless one-shot verified.
     RunnerSpec("qoder", "qoder", ["-p", "{prompt}"]),
     RunnerSpec("qwen", "qwen", ["{prompt}"]),
-    # muse/cline/kilo/kiro-cli: research-only, deliberately NO auto-approve/trust flag.
-    # A research call never needs write trust, so omitting these flags means each
-    # tool's own DEFAULT (conservative) permission mode applies, and a headless
+    # muse/cline/kilo/kiro-cli: research-only, deliberately no BLANKET write-trust
+    # flag (--yolo / --trust-all-tools / an --auto that defaults to true). cline's
+    # own default is --auto-approve=true, so it gets an explicit override to false
+    # here; the other three simply omit their trust flag, leaving each tool's
+    # DEFAULT (conservative) permission mode in force. Either way, a headless
     # session with no one to approve a tool call fails that call safely rather than
-    # silently granting it.
+    # silently granting it — a research call never needs write trust regardless.
     RunnerSpec("muse", "muse", ["exec", "{prompt}"]),
     RunnerSpec("cline", "cline", ["--auto-approve", "false", "{prompt}"]),
     RunnerSpec("kilo", "kilo", ["run", "{prompt}"]),
