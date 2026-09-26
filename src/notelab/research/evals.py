@@ -60,7 +60,10 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # silently granting it — a research call never needs write trust regardless.
     RunnerSpec("muse", "muse", ["exec", "{prompt}"]),
     RunnerSpec("cline", "cline", ["--auto-approve", "false", "{prompt}"]),
-    RunnerSpec("kilo", "kilo", ["run", "{prompt}"]),
+    # kilo's DEFAULT model needs paid credits ("Add credits to continue, or
+    # switch to a free model" -- confirmed live); pinned to an explicit free
+    # model or every dispatch fails before reaching the research question.
+    RunnerSpec("kilo", "kilo", ["run", "-m", "kilo/kilo-auto/free", "{prompt}"]),
     RunnerSpec("kiro-cli", "kiro-cli", ["chat", "{prompt}", "--no-interactive"]),
 ]
 
