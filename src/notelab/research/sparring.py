@@ -53,19 +53,21 @@ def _sources_from_adversary_output(result: RunnerResult, question: str) -> list[
     stdout becomes one sourceless SourceFeatures rather than an empty list. A
     genuinely empty answer still yields an empty list -- there is nothing to score."""
     text = result.stdout or ""
-    urls = _URL_RE.findall(text)
-    if not urls:
+    matches = list(_URL_RE.finditer(text))
+    if not matches:
         if not text.strip():
             return []
         return [SourceFeatures(id=f"{result.runner}-0", title=f"{result.runner} answer",
                                url="", content=text[:2000])]
     out = []
-    for i, url in enumerate(urls):
-        idx = text.find(url)
-        start = max(0, idx - 200)
-        end = min(len(text), idx + len(url) + 200)
+    for i, m in enumerate(matches):
+        # m.start()/m.end() are this SPECIFIC match's real position -- not
+        # text.find(url), which would always return the FIRST occurrence and give
+        # every repeat citation of the same URL the wrong (first one's) snippet.
+        start = max(0, m.start() - 200)
+        end = min(len(text), m.end() + 200)
         out.append(SourceFeatures(id=f"{result.runner}-{i}", title=f"{result.runner} source {i}",
-                                  url=url, content=text[start:end]))
+                                  url=m.group(0), content=text[start:end]))
     return out
 
 
