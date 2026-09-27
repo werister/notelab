@@ -1,5 +1,15 @@
 # Swarm loop orchestration: critique/refine chains, cross-vote councils, real rosters
 
+> **Superseded** by `docs/superpowers/specs/2026-09-27-swarm-escalation-loops-design.md`,
+> written concurrently in a separate session on the same idea, already carried through
+> `/plan-eng-review` + `/plan-devex-review` with real fixes applied (notably: this doc's
+> multi-model-per-provider roster keeps `RunnerSpec.name` as the plain provider name with a
+> separate `lane_id` for tracking, but never fixes `branch_name()`/`worktree_path()` — both
+> still key off `agent` alone, so two lanes of the same provider would collide on the same
+> worktree path; the other spec catches the equivalent bug directly and fixes it with an
+> explicit `RunnerSpec.provider` field). Kept here for its Fugu framing and Phase 1/Phase 2
+> staging rationale, not as the design to implement — build from the other doc.
+
 ## Problem
 
 The swarm dispatcher (`[redacted-private-project]/examples/dispatch_code_fix.py`) built and proven this
