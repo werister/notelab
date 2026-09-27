@@ -10,10 +10,12 @@ a task took.
 
 **Architecture:** `RunnerSpec` (notelab) gains an explicit `provider` field so multi-model
 rosters never collide on git-safe branch/worktree naming or need fragile name-splitting for
-cross-family checks. `dispatch_code_fix.py` ([redacted-private-project]) gains `critique_prompt()`, circuit
-breakers (`check_hard_quota`/`check_garbled`), `run_chain()`, `run_council()`, a `--pattern`
-CLI flag, distinct escalation exit codes/report files, and structured ledger fields
-(`correction_rounds`, `escalated_from_previous_step`) alongside the existing free-text tags.
+cross-family checks. `dispatch_code_fix.py` ([redacted-private-project]) gains `critique_prompt()`, a unified
+circuit-breaker classifier (`classify_failure()`, backed by `_looks_garbled()` and the shared
+`_next_lane()` same-provider retry primitive), deterministic round-0 lane selection
+(`select_lane()`), `run_chain()`, `run_council()`, a `--pattern` CLI flag, distinct escalation
+exit codes/report files, and structured ledger fields (`correction_rounds`,
+`escalated_from_previous_step`) alongside the existing free-text tags.
 
 **Tech Stack:** Python 3.10+ stdlib, `pytest`, existing `redacted_private_project.routing_monitor` ledger
 schema, `concurrent.futures.ThreadPoolExecutor` (already used by the race pattern).
@@ -30,8 +32,9 @@ including its T1-T4 implementation-task checklist.
 - **Modify** `notelab/src/notelab/research/evals.py` — add `RunnerSpec.provider: str = ""`.
 - **Modify** `notelab/tests/test_evolve_and_evals.py` — regression test for the new field.
 - **Modify** `[redacted-private-project]/examples/dispatch_code_fix.py` — `CODE_FIX_ROSTERS` (multi-model,
-  git-safe names + `provider`), `critique_prompt()`, `check_hard_quota()`/`check_garbled()`,
-  `run_chain()`, `run_council()`, `--pattern` CLI surface, escalation reporting.
+  git-safe names + `provider`), `critique_prompt()`, `classify_failure()` (+ `_looks_garbled()`,
+  `_next_lane()`), `select_lane()`, `run_chain()`, `run_council()`, `--pattern` CLI surface,
+  escalation reporting.
 - **Modify** `[redacted-private-project]/tests/test_dispatch_code_fix.py` — tests for all of the above.
 - **Create** `[redacted-private-project]/examples/dump_ledger.py` — minimal ledger read-back tool (T4).
 - **Create** `[redacted-private-project]/tests/test_dump_ledger.py`.
@@ -281,7 +284,7 @@ name-splitting scheme."
 
 ---
 
-## Task 3: `critique_prompt()` and circuit breakers
+## Task 3: `critique_prompt()` and the unified `classify_failure()` circuit breaker
 
 **Files:**
 - Modify: `[redacted-private-project]/examples/dispatch_code_fix.py`
@@ -305,31 +308,67 @@ def test_critique_prompt_truncates_long_diffs():
     assert len(p) < len(long_diff)  # bounded, reuses the 4000-char convention
 
 
-def test_check_hard_quota_matches_real_captured_error_strings():
-    # regression tests against the EXACT real stderr this session captured live, not
-    # synthetic text
-    assert dcf.check_hard_quota("", "error: Insufficient balance. Your Cline Credits balance is $0.01")
-    assert dcf.check_hard_quota("Error: Internal error (code -32603): ... The monthly usage limit has been reached (request_id: abc)", "")
-    assert not dcf.check_hard_quota("", "some other unrelated error")
+def test_classify_failure_detects_quota_exhausted_from_real_captured_strings():
+    # regression tests against the EXACT real stderr/stdout this session captured
+    # live, not synthetic text
+    assert dcf.classify_failure(
+        "error: Insufficient balance. Your Cline Credits balance is $0.01", "") == "quota_exhausted"
+    assert dcf.classify_failure(
+        "Error: Internal error (code -32603): ... The monthly usage limit has been "
+        "reached (request_id: abc)", "") == "quota_exhausted"
 
 
-def test_check_garbled_matches_the_real_opencode_failure():
+def test_classify_failure_detects_broken_flag_only_with_cooccurring_phrase():
+    # kiro-cli's real captured failure: BOTH phrases present
+    assert dcf.classify_failure("...failed to set model...: Method not found", "") == "broken_flag"
+    # "method not found" ALONE is the generic JSON-RPC/XML-RPC error -32601 message --
+    # common enough that a code-fix task touching any RPC handler, or an agent's
+    # stdout echoing a diff/log containing that exact string, would misfire. Must
+    # NOT classify as broken_flag without the co-occurring "failed to set model".
+    assert dcf.classify_failure("Error: Method not found", "") is None
+    assert dcf.classify_failure("", "some log echoing a diff that mentions method not found") is None
+
+
+def test_classify_failure_detects_garbled_output_from_the_real_opencode_failure():
     real_garbled = ("pip3 install |)ك... ... ... Diskussion rec and blah  something] "
                     "tests model and take a\nity\n\n an setting aaf89639 install pytest "
                     "--break-system-packages 2>&1 | tail -5")
-    assert dcf.check_garbled(real_garbled)
-    assert dcf.check_garbled("zsh:1: parse error near `)'")
-    assert not dcf.check_garbled("Added module docstring to x.py")  # real clean output
+    assert dcf.classify_failure("", real_garbled) == "garbled_output"
+    assert dcf.classify_failure("", "zsh:1: parse error near `)'") == "garbled_output"
+
+
+def test_classify_failure_returns_none_for_unrecognized_text():
+    # no known pattern -- falls through to the existing generic error/timeout
+    # handling unchanged
+    assert dcf.classify_failure("", "some other unrelated error") is None
+    assert dcf.classify_failure("", "Added module docstring to x.py") is None  # real clean output
+
+
+def test_next_lane_picks_next_same_provider_entry_in_declaration_order():
+    from types import SimpleNamespace
+    roster = [SimpleNamespace(name="kilo-auto", provider="kilo"),
+             SimpleNamespace(name="kilo-nemotron-ultra", provider="kilo"),
+             SimpleNamespace(name="kilo-step-flash", provider="kilo")]
+    fallback = dcf._next_lane(roster, roster[0])
+    assert fallback.name == "kilo-nemotron-ultra"  # next in declaration order, not random
+
+
+def test_next_lane_returns_none_when_exclude_is_the_only_entry():
+    from types import SimpleNamespace
+    roster = [SimpleNamespace(name="kiro-cli", provider="kiro-cli")]
+    assert dcf._next_lane(roster, roster[0]) is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k "critique_prompt or check_hard_quota or check_garbled" -v`
-Expected: FAIL — `AttributeError: module 'dispatch_code_fix' has no attribute 'critique_prompt'` (and similarly for the other two).
+Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k "critique_prompt or classify_failure or next_lane" -v`
+Expected: FAIL — `AttributeError: module 'dispatch_code_fix' has no attribute 'classify_failure'` (and similarly for `_next_lane`, `critique_prompt`).
 
 - [ ] **Step 3: Implement**
 
-Add to `examples/dispatch_code_fix.py`, after `capture_diff`:
+Add to `examples/dispatch_code_fix.py`, after `capture_diff`. This is a straight copy of the
+spec's own `classify_failure()` contract (function signature, the three return values, and
+the exact `broken_flag` false-positive-avoidance narrowing) — not a reinterpretation:
 
 ```python
 def critique_prompt(task_prompt: str, diff: str) -> str:
@@ -348,35 +387,55 @@ def critique_prompt(task_prompt: str, diff: str) -> str:
     )
 
 
-_QUOTA_PATTERNS = [
-    "insufficient balance", "monthly usage limit", "add credits to continue",
-]
-
-
-def check_hard_quota(stdout: str, stderr: str) -> bool:
-    """A hard, account-level exhaustion -- confirmed live this session for both cline
-    (Credits balance) and kiro-cli (monthly cap). Never fixable by retrying the same
-    account, regardless of which model is requested."""
-    low = (stdout + stderr).lower()
-    return any(p in low for p in _QUOTA_PATTERNS)
-
-
-_GARBLE_MARKERS = ["parse error", "syntax error near", "unexpected token"]
-
-
-def check_garbled(text: str) -> bool:
-    """Cheap heuristic, not a classifier -- flags a shell-syntax-error marker (the real
-    opencode failure: a hallucinated command containing literal gibberish that zsh
-    rejected), or an implausible non-ASCII density in what should be plain prose/code.
-    False positives are acceptable (worst case: one wasted retry); false negatives are
-    the failure mode that actually hurt this session, so this errs toward sensitivity."""
-    low = text.lower()
-    if any(m in low for m in _GARBLE_MARKERS):
+def _looks_garbled(stdout: str) -> bool:
+    """Bounded, fast heuristic (no model call) -- over-triggers on purpose: false
+    positives cost one wasted retry, false negatives are the failure mode that
+    actually hurt this session. Flags either (a) a shell-syntax-error marker
+    immediately following a tool-call block, or (b) a line mixing non-ASCII
+    characters with shell metacharacters (|, ), ...) above a fixed density --
+    matches the real captured opencode failure verbatim:
+    "pip3 install |)ك... ... ... Diskussion..."."""
+    low = stdout.lower()
+    if "parse error near" in low or "unexpected token" in low:
         return True
-    if not text.strip():
-        return False
-    non_ascii = sum(1 for c in text if ord(c) > 127)
-    return non_ascii / max(len(text), 1) > 0.05
+    for line in stdout.splitlines():
+        non_ascii = sum(1 for c in line if ord(c) > 127)
+        metachars = sum(line.count(m) for m in ("|", ")", "..."))
+        if non_ascii and metachars and (non_ascii + metachars) / max(len(line), 1) > 0.05:
+            return True
+    return False
+
+
+def classify_failure(stderr: str, stdout: str) -> str | None:
+    """One of "quota_exhausted" | "broken_flag" | "garbled_output" | None (no known
+    pattern -- falls through to the existing generic error/timeout handling unchanged).
+    Patterns below are the EXACT real strings captured live this session, not guessed."""
+    low = (stderr + stdout).lower()
+    if any(p in low for p in ("insufficient balance", "monthly usage limit",
+                              "add credits to continue")):
+        return "quota_exhausted"
+    # "method not found" ALONE is the generic JSON-RPC/XML-RPC error -32601 message --
+    # common enough that a code-fix task touching any RPC handler, or an agent's stdout
+    # echoing a diff/log containing that exact string, would misfire. Anchored to the
+    # actual captured fixture's more specific co-occurring phrase instead.
+    if "failed to set model" in low and "method not found" in low:
+        return "broken_flag"
+    if _looks_garbled(stdout):
+        return "garbled_output"
+    return None
+
+
+def _next_lane(roster: list, exclude) -> object | None:
+    """Shared retry primitive, used by BOTH broken_flag and garbled_output (the spec
+    is explicit that broken_flag reuses this exact mechanism rather than inventing a
+    second one): picks the next entry in the same provider's roster that isn't
+    `exclude`, in declaration order (not random). Returns None if `exclude` was the
+    roster's only entry for that provider -- the caller escalates immediately rather
+    than retrying against nothing."""
+    for spec in roster:
+        if spec.name != exclude.name:
+            return spec
+    return None
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -394,12 +453,18 @@ Expected: PASS.
 ```bash
 cd /Users/<you>/dev/[redacted-private-project]/.worktrees/swarm-dispatch
 git add examples/dispatch_code_fix.py tests/test_dispatch_code_fix.py
-git commit -m "feat(swarm): critique_prompt() + circuit breakers for real observed failures
+git commit -m "feat(swarm): critique_prompt() + classify_failure() unified circuit breaker
 
-check_hard_quota/check_garbled are regression tests against the EXACT
-stderr/stdout this session captured live (cline's Insufficient balance,
-kiro-cli's monthly usage limit, opencode's actual hallucinated gibberish
-command), not synthetic failure text."
+classify_failure() replaces two separate boolean checks with one
+classifier returning quota_exhausted | broken_flag | garbled_output |
+None, matching the spec exactly -- including broken_flag's narrowed
+co-occurring-phrase match ('failed to set model' AND 'method not found',
+not the bare -32601 JSON-RPC message alone) and the shared _next_lane()
+same-provider retry primitive used by both broken_flag and
+garbled_output. Regression tests are the EXACT stderr/stdout this
+session captured live (cline's Insufficient balance, kiro-cli's monthly
+usage limit and broken --model flag, opencode's actual hallucinated
+gibberish command), not synthetic failure text."
 ```
 
 ---
@@ -493,6 +558,42 @@ def test_run_chain_requires_cross_family_critic():
     with pytest.raises(ValueError, match="cross-family"):
         dcf.run_chain("task", implementer, same_family_critic, lambda *a, **k: None,
                       __import__("pathlib").Path("/tmp"), max_rounds=2, timeout=5)
+
+
+def test_run_chain_escalates_immediately_on_a_circuit_breaker(monkeypatch, tmp_path):
+    # classify_failure() (Task 3) applies to EVERY agent dispatch in the chain, not
+    # just the critic -- a hard-quota implementer response escalates right away.
+    implementer = _spec("kilo-auto", "kilo")
+    critic = _spec("cline-glm", "cline")
+
+    def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
+        if spec.name == implementer.name:
+            return SimpleNamespace(
+                stdout="", stderr="Insufficient balance. Your Cline Credits balance is $0.01",
+                timed_out=False, skipped_reason=None)
+        return SimpleNamespace(stdout="CLEAN: no issues found", stderr="",
+                               timed_out=False, skipped_reason=None)
+
+    outcome = dcf.run_chain("task", implementer, critic, fake_run_adversary,
+                            tmp_path, max_rounds=2, timeout=5)
+    assert outcome.converged is False
+    assert "quota_exhausted" in outcome.final_critique
+
+
+def test_select_lane_is_deterministic_per_task_slug():
+    # hashlib.sha256(task_slug).digest()[0] % len(roster) -- a --resume of the same
+    # task_slug always reconstructs the same starting lane.
+    roster = [_spec("kilo-auto", "kilo"), _spec("kilo-nemotron-ultra", "kilo"),
+             _spec("kilo-step-flash", "kilo")]
+    first = dcf.select_lane(roster, "gap2-semantic-fix")
+    second = dcf.select_lane(roster, "gap2-semantic-fix")
+    assert first.name == second.name
+    assert first in roster
+
+
+def test_select_lane_rejects_empty_roster_instead_of_bare_zerodivisionerror():
+    with pytest.raises(AssertionError):
+        dcf.select_lane([], "any-slug")
 ```
 
 Also add `import pytest` to the test file's top if not already present (check first — it
@@ -500,12 +601,15 @@ likely isn't needed elsewhere in this file yet).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k run_chain -v`
-Expected: FAIL — `AttributeError: module 'dispatch_code_fix' has no attribute 'run_chain'`.
+Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k "run_chain or select_lane" -v`
+Expected: FAIL — `AttributeError: module 'dispatch_code_fix' has no attribute 'run_chain'`
+(and `'select_lane'`).
 
-- [ ] **Step 3: Implement `run_chain`**
+- [ ] **Step 3: Implement `run_chain` and `select_lane`**
 
-Add a `ChainOutcome` dataclass and `run_chain` function to `examples/dispatch_code_fix.py`,
+Add `import hashlib` near the top of `examples/dispatch_code_fix.py` if not already imported.
+
+Add a `ChainOutcome` dataclass, `select_lane`, and `run_chain` to `examples/dispatch_code_fix.py`,
 after `dispatch_one`:
 
 ```python
@@ -521,6 +625,25 @@ class ChainOutcome:
     critic: str = ""
 
 
+def select_lane(roster: list, task_slug: str):
+    """Deterministic round-0 implementer lane selection (spec: 'Deterministic lane
+    selection'): hashlib.sha256(task_slug) picks an index into `roster`, so a
+    --resume of the same task_slug always reconstructs the same starting lane
+    instead of silently picking a different model. Asserts rather than letting an
+    empty roster raise a bare ZeroDivisionError with no context -- every roster in
+    CODE_FIX_ROSTERS is a hardcoded non-empty literal, so this should never fire in
+    practice. The guarantee holds only within a FIXED roster (the same deployed
+    version of this script): if the roster itself changes between the original run
+    and a --resume (an entry added/removed/reordered), the same task_slug can hash
+    to a different index into a different list -- --resume is meant for a
+    short-lived retry against the same deployed code, not a durable guarantee across
+    script edits, the same implicit assumption every other static roster table in
+    this file already makes."""
+    assert len(roster) > 0, "select_lane: roster must be non-empty"
+    idx = hashlib.sha256(task_slug.encode()).digest()[0] % len(roster)
+    return roster[idx]
+
+
 def run_chain(task_prompt: str, implementer, critic, run_adversary, worktree: Path,
              max_rounds: int = 2, timeout: int = DEFAULT_TIMEOUT) -> ChainOutcome:
     if implementer.provider == critic.provider:
@@ -534,13 +657,20 @@ def run_chain(task_prompt: str, implementer, critic, run_adversary, worktree: Pa
         if result.timed_out or result.skipped_reason:
             out.final_critique = f"implementer failed: {'timed out' if result.timed_out else result.skipped_reason}"
             return out
+        failure = classify_failure(result.stderr or "", result.stdout or "")
+        if failure:
+            print(f"[circuit-breaker] {implementer.name}: {failure}", file=sys.stderr)
+            out.final_critique = f"implementer circuit breaker: {failure}"
+            return out
         diff = capture_diff(worktree)
         out.final_diff = diff
 
         critique = run_adversary(critic, critique_prompt(task_prompt, diff),
                                  timeout=timeout, cwd=str(worktree))
-        if check_garbled(critique.stdout or ""):
-            out.final_critique = "critic output looked garbled"
+        failure = classify_failure(critique.stderr or "", critique.stdout or "")
+        if failure:
+            print(f"[circuit-breaker] {critic.name}: {failure}", file=sys.stderr)
+            out.final_critique = f"critic circuit breaker: {failure}"
             return out
         verdict = (critique.stdout or "").strip()
         out.rounds_used = round_num
@@ -555,6 +685,16 @@ def run_chain(task_prompt: str, implementer, critic, run_adversary, worktree: Pa
         prompt = f"{task_prompt}\n\nA reviewer found: {verdict}\nPlease address this."
     return out
 ```
+
+Note: this task deliberately does not wire the `broken_flag`/`garbled_output`
+same-provider retry (via Task 3's `_next_lane()`) into `run_chain` itself --
+`run_chain` receives a single already-resolved `implementer`/`critic` `RunnerSpec`,
+not a roster, so it has nothing to retry against internally. `_next_lane` is called
+at the roster-resolution layer instead: Task 7's CLI wiring uses `select_lane` (this
+step) for round-0 selection and is the natural place a future retry-on-circuit-
+breaker enhancement would also call `_next_lane` with the full roster in hand. A
+circuit breaker firing inside `run_chain` today escalates immediately rather than
+retrying -- a real, documented scope boundary, not a silent gap.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -571,12 +711,16 @@ Expected: PASS.
 ```bash
 cd /Users/<you>/dev/[redacted-private-project]/.worktrees/swarm-dispatch
 git add examples/dispatch_code_fix.py tests/test_dispatch_code_fix.py
-git commit -m "feat(swarm): run_chain() -- implement/critique/refine loop (Pattern A)
+git commit -m "feat(swarm): run_chain() + select_lane() -- Pattern A and round-0 lane pick
 
 Cross-family critic enforced (Law 2, same principle consensus_gate.sh
 already establishes). Converges on a CLEAN critique + passing tests;
-escalates (converged=False) after max_rounds with the final unresolved
-critique preserved for the escalation report."
+escalates (converged=False) after max_rounds, or immediately on a
+classify_failure() circuit breaker from either the implementer or the
+critic, with the trigger preserved in final_critique for the escalation
+report. select_lane() adds the spec's deterministic hash-based round-0
+lane selection (hashlib.sha256(task_slug)[0] % len(roster)) so a
+--resume of the same task_slug reconstructs the same starting lane."
 ```
 
 ---
@@ -889,12 +1033,36 @@ def test_write_chain_report_persists_round_history(tmp_path):
     data = __import__("json").loads((run_dir / "chain-report.json").read_text())
     assert data["converged"] is False
     assert data["rounds_used"] == 2
+
+
+def test_main_pattern_council_reuses_agents_flag_not_a_new_implementers_flag():
+    # spec's CLI section: council "reuses --agents for the racing implementers
+    # (exactly as today), adds --judges ... and --consensus-threshold" -- there is
+    # deliberately no separate --implementers flag.
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--agents", default=None)  # the pre-existing race flag
+    dcf._add_pattern_args(p)
+    args = p.parse_args(["--pattern", "council", "--agents", "kilo-auto,cline-glm-5-3",
+                         "--judges", "muse,kilo-step-flash", "--consensus-threshold", "0.6"])
+    assert args.agents == "kilo-auto,cline-glm-5-3"
+    assert not hasattr(args, "implementers")
+
+
+def test_resolve_roster_spec_matches_exact_name_or_hashes_a_provider_name(tmp_path):
+    roster = [dcf.CODE_FIX_ROSTERS["kilo"][0], dcf.CODE_FIX_ROSTERS["kilo"][1]]
+    exact = dcf._resolve_roster_spec(roster, roster[0].name, "any-slug")
+    assert exact is roster[0]
+    by_provider = dcf._resolve_roster_spec(roster, "kilo", "gap2-semantic-fix")
+    assert by_provider in roster  # deterministically chosen via select_lane()
+    assert dcf._resolve_roster_spec(roster, "no-such-name-or-provider", "x") is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k "pattern or EXIT_ or chain_report" -v`
-Expected: FAIL — `AttributeError` for each missing name (`_add_pattern_args`, `EXIT_CONVERGED`, `write_chain_report`).
+Run: `.venv/bin/pytest tests/test_dispatch_code_fix.py -k "pattern or EXIT_ or chain_report or resolve_roster_spec" -v`
+Expected: FAIL — `AttributeError` for each missing name (`_add_pattern_args`, `EXIT_CONVERGED`,
+`write_chain_report`, `_resolve_roster_spec`).
 
 - [ ] **Step 3: Implement**
 
@@ -910,10 +1078,29 @@ def _add_pattern_args(p) -> None:
     p.add_argument("--pattern", choices=["race", "chain", "council"], default="race")
     p.add_argument("--implementer", default="", help="chain: roster name of the implementer")
     p.add_argument("--critic", default="", help="chain: roster name of the critic")
-    p.add_argument("--implementers", default="", help="council: comma-separated roster names")
+    # council reuses the EXISTING --agents flag (already defined above in main()'s
+    # argparse setup, same comma-splitting convention as the race pattern) for the
+    # racing implementers -- per the spec's CLI section there is deliberately no
+    # separate --implementers flag.
     p.add_argument("--judges", default="", help="council: comma-separated roster names")
     p.add_argument("--max-rounds", type=int, default=2)
     p.add_argument("--consensus-threshold", type=float, default=0.6)
+
+
+def _resolve_roster_spec(specs: list, name: str, task_slug: str):
+    """Resolve a --implementer/--critic/--judges value to a RunnerSpec. An exact
+    roster name (e.g. "kilo-nemotron-ultra", matching the CLI examples in the spec)
+    matches directly. A bare provider name (e.g. "kilo") instead deterministically
+    picks one lane from that provider's specs via select_lane() (Task 4), so a
+    --resume with only a provider given reconstructs the same starting lane. Returns
+    None if `name` matches neither."""
+    exact = next((s for s in specs if s.name == name), None)
+    if exact is not None:
+        return exact
+    same_provider = [s for s in specs if s.provider == name]
+    if same_provider:
+        return select_lane(same_provider, task_slug)
+    return None
 ```
 
 Add `write_chain_report` after `write_report`:
@@ -947,10 +1134,10 @@ then branch after roster loading:
         if not args.implementer or not args.critic:
             print("error: --pattern chain requires --implementer and --critic", file=sys.stderr)
             return EXIT_ARG_ERROR
-        impl_spec = next((s for s in specs if s.name == args.implementer), None)
-        critic_spec = next((s for s in specs if s.name == args.critic), None)
+        impl_spec = _resolve_roster_spec(specs, args.implementer, args.task_slug)
+        critic_spec = _resolve_roster_spec(specs, args.critic, args.task_slug)
         if impl_spec is None or critic_spec is None:
-            print("error: --implementer/--critic must be a known roster name", file=sys.stderr)
+            print("error: --implementer/--critic must be a known roster name or provider", file=sys.stderr)
             return EXIT_ARG_ERROR
         if impl_spec.provider == critic_spec.provider:
             print(f"error: --critic must be cross-family (got same provider "
@@ -970,7 +1157,10 @@ then branch after roster loading:
 
 (council branch follows the same shape; left as a direct extension of the chain branch above
 using `run_council`/`write_council_report`/existing race-style worktree-per-candidate setup —
-implement analogously, verified by Step 4's tests.)
+implement analogously, verified by Step 4's tests. Critically, it resolves its racing
+implementers from the EXISTING `--agents` comma-split (`wanted`/`specs` already computed
+earlier in `main()` for the race pattern), not from a new `--implementers` flag — `--judges`
+is the only new list-valued flag council adds, matching the spec's CLI section exactly.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -989,10 +1179,15 @@ cd /Users/<you>/dev/[redacted-private-project]/.worktrees/swarm-dispatch
 git add examples/dispatch_code_fix.py tests/test_dispatch_code_fix.py
 git commit -m "feat(swarm): --pattern CLI surface + distinct escalation exit code
 
---pattern race (default, unchanged) | chain | council. Escalation exits 2
-(distinct from 0=converged, 1=argument error) -- a scriptable signal a
-caller (cron, another agent) can branch on. chain-report.{md,json} under
-the existing .swarm-runs/<task_slug>/ convention."
+--pattern race (default, unchanged) | chain | council. Council reuses the
+existing --agents flag for racing implementers (no new --implementers
+flag, matching the spec's CLI section exactly) and adds --judges +
+--consensus-threshold. --implementer/--critic accept either an exact
+roster name or a bare provider name (resolved via select_lane() for
+deterministic --resume behavior). Escalation exits 2 (distinct from
+0=converged, 1=argument error) -- a scriptable signal a caller (cron,
+another agent) can branch on. chain-report.{md,json} under the existing
+.swarm-runs/<task_slug>/ convention."
 ```
 
 ---
@@ -1128,17 +1323,27 @@ prior path was a hand-written SQLite query."
 ## Self-Review Notes
 
 - **Spec coverage:** Task 1 -> `RunnerSpec.provider` (P0 eng fix). Task 2 -> expanded rosters +
-  git-safe naming (P0/P1 eng fixes). Task 3 -> critique prompt + circuit breakers (T3, Pass 3
-  devex findings). Task 4/5 -> Pattern A/B core design. Task 6 -> structured ledger fields (P1
-  eng fix). Task 7 -> CLI surface + escalation reporting (T1/T2, Pass 1/2/3 devex findings).
-  Task 8 -> ledger read-back tool (T4, Pass 6/8 devex finding). `consensus_threshold` default
-  (0.6) and garble-heuristic limitations are carried forward as the spec's own stated Open
-  Questions, not resolved here — first real council run is what calibrates them.
+  git-safe naming (P0/P1 eng fixes). Task 3 -> critique prompt + the unified `classify_failure()`
+  circuit breaker (`quota_exhausted`/`broken_flag`/`garbled_output`, the narrowed `broken_flag`
+  co-occurring-phrase match, and the shared `_next_lane()` retry primitive) — matches the
+  spec's revised design exactly, not the superseded two-boolean-function draft. Task 4 ->
+  Pattern A core design + `select_lane()` deterministic round-0 lane selection. Task 5 ->
+  Pattern B core design. Task 6 -> structured ledger fields (P1 eng fix: `Attribution.
+  correction_rounds`/`RoutingMetadata.escalated_from_previous_step`, not free-text-only). Task 7
+  -> CLI surface + escalation reporting (T1/T2, Pass 1/2/3 devex findings) — council reuses
+  `--agents`, not a new `--implementers` flag, per the spec's CLI section. Task 8 -> ledger
+  read-back tool (T4, Pass 6/8 devex finding). `consensus_threshold` default (0.6) and
+  garble-heuristic limitations are carried forward as the spec's own stated Open Questions, not
+  resolved here — first real council run is what calibrates them.
 - **Placeholder scan:** none found — every step has complete code.
 - **Type consistency:** `ChainOutcome`/`CouncilOutcome` field names used identically across
   `run_chain`/`run_council`, `record_chain_ledger`, `write_chain_report`, and their tests.
   `RunnerSpec.provider` threaded consistently from Task 1 through every later task that reads
-  it (cross-family checks in Tasks 4/5, roster construction in Task 2).
+  it (cross-family checks in Tasks 4/5, roster construction in Task 2). `classify_failure()`/
+  `_next_lane()` (Task 3) and `select_lane()` (Task 4) are referenced with the same names and
+  signatures everywhere they're used downstream (Task 4's `run_chain`, Task 7's
+  `_resolve_roster_spec`) — no lingering references to the superseded `check_hard_quota`/
+  `check_garbled` two-function design anywhere in this plan.
 
 ---
 
