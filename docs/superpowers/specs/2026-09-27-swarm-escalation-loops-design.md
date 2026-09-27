@@ -137,7 +137,11 @@ def classify_failure(stderr: str, stdout: str) -> str | None:
     if any(p in low for p in ("insufficient balance", "monthly usage limit",
                               "add credits to continue")):
         return "quota_exhausted"
-    if "method not found" in low:
+    # "method not found" ALONE is the generic JSON-RPC/XML-RPC error -32601 message --
+    # common enough that a code-fix task touching any RPC handler, or an agent's stdout
+    # echoing a diff/log containing that exact string, would misfire. Anchored to the
+    # actual captured fixture's more specific co-occurring phrase instead.
+    if "failed to set model" in low and "method not found" in low:
         return "broken_flag"
     if _looks_garbled(stdout):
         return "garbled_output"
@@ -171,15 +175,24 @@ raw SQLite query against the ledger. All three are ALSO recorded as ledger tags
   sees the exclusion — a benign race, not a correctness bug, since both just fail the
   same real way.)
 - **`broken_flag`** (kiro-cli's `--model` erroring "Method not found" in the installed
-  CLI version): log once, fall back to that roster entry's tool with NO `-m` override
-  (the tool's own default) rather than retrying the identical broken invocation. This is
-  a real, currently-open limitation (kiro-cli stays effectively single-model until the
-  CLI itself fixes the flag), not silently worked around.
+  CLI version): reuses the EXACT SAME fallback mechanism as `garbled_output` below —
+  retry once on a different `RunnerSpec` with the same `.provider` — rather than
+  inventing a second mechanism. For a roster where one entry IS already the tool's plain
+  default invocation (no `-m` flag; e.g. kiro-cli's own single-entry "roster" today), the
+  fallback naturally lands there. This is a real, currently-open limitation (kiro-cli's
+  broader roster stays blocked until the CLI itself fixes the flag), not silently worked
+  around.
 - **`garbled_output`**: triggers ONE automatic retry on a DIFFERENT `RunnerSpec` with
   the SAME `.provider` (never the same `.name` again; opencode's
   `nemotron-3.5-lightning-free` garbling isn't going to un-garble on retry). Prints
   `[circuit-breaker] {agent}'s output looked garbled, retrying once on {fallback.name}`.
   A second garble from the retry escalates immediately rather than looping.
+- **Shared retry primitive** (used by both `broken_flag` and `garbled_output` above):
+  `_next_lane(roster: list[RunnerSpec], exclude: RunnerSpec) -> RunnerSpec | None` —
+  picks the next entry in the same provider's roster that isn't `exclude`, in
+  declaration order (not random); returns `None` if `exclude` was the roster's only
+  entry for that provider, which escalates immediately rather than retrying (nothing
+  left to retry against).
 - **Per-model timeout**: default stays `DEFAULT_TIMEOUT` (420s), but the roster can carry
   a per-entry override — muse and opencode get more room; kilo (123s to a full working
   fix in the real race) doesn't need as much.
@@ -188,7 +201,19 @@ raw SQLite query against the ledger. All three are ALSO recorded as ledger tags
 lane for round 0 is picked by `hashlib.sha256(task_slug.encode()).digest()[0] %
 len(roster)` — deterministic per task-slug (not random), so a `--resume` of the same
 task always reconstructs the same starting lane instead of silently picking a different
-model on retry.
+model on retry. Two real constraints on that guarantee, stated explicitly rather than
+implied: (1) `len(roster)` is never 0 in practice — every roster in "Expanded rosters"
+above is a hardcoded non-empty literal — but the implementation still asserts this
+rather than let an empty roster raise a bare `ZeroDivisionError` with no context. (2)
+the guarantee holds only within a FIXED roster (the same deployed version of this
+script) — if the roster itself changes between the original run and a `--resume` (a
+free-tier promo rotates out, an entry gets added/removed/reordered — exactly the
+rotation "Expanded rosters" already documents happening to `qwen/qwen3.8-27b:free`),
+the same `task_slug` can hash to a different index into a different list. `--resume` is
+meant for a short-lived retry shortly after a failed run against the same deployed
+code, not a durable guarantee across script edits — the same implicit assumption every
+other part of this file already makes (the roster tables themselves are static Python
+literals, not fetched live per invocation).
 
 ## Design — Pattern B: parallel race + cross-vote council
 
