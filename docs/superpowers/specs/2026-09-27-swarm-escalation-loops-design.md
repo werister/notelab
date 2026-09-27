@@ -125,35 +125,70 @@ run_chain(task_prompt, target_repo, implementer: RunnerSpec, critic: RunnerSpec,
    pass/fail) so a human/live session knows this needs frontier judgment, not just "it
    failed."
 
-**Circuit breakers** (from real failure modes observed this session, not hypothetical).
-**Revised after devex review**: both breakers below now print an explicit `stderr` line
-when they fire, matching the base script's existing loud-stderr house style (e.g. the
-worktree-pre-check and `--resume` errors) — previously they were silent in-process state
-changes, so a human debugging a run at 3am had no way to tell "this escalated because of
-a circuit breaker" from "this escalated because nobody converged" short of a raw SQLite
-query against the ledger. Both are ALSO recorded as ledger tags
-(`circuit_breaker:hard_quota`, `circuit_breaker:garble_retry`) so they're queryable, not
-just printed:
-- **Hard quota exhaustion** (kiro-cli's account-level monthly cap): the FIRST hard-quota
-  error from any provider marks that provider `unavailable` for the rest of the process
-  run (an in-memory set, not a config file) — never retried against the same dead
-  account mid-run. Prints `[circuit-breaker] {agent} marked unavailable for the rest of
-  this run: {reason}` to stderr the moment it fires. (P2 note: under `ThreadPoolExecutor`
+**Circuit breakers** (from real failure modes observed this session, not hypothetical),
+built as one explicit classifier rather than scattered heuristics:
+
+```python
+def classify_failure(stderr: str, stdout: str) -> str | None:
+    """One of "quota_exhausted" | "broken_flag" | "garbled_output" | None (no known
+    pattern -- falls through to the existing generic error/timeout handling unchanged).
+    Patterns below are the EXACT real strings captured live this session, not guessed."""
+    low = (stderr + stdout).lower()
+    if any(p in low for p in ("insufficient balance", "monthly usage limit",
+                              "add credits to continue")):
+        return "quota_exhausted"
+    if "method not found" in low:
+        return "broken_flag"
+    if _looks_garbled(stdout):
+        return "garbled_output"
+    return None
+```
+
+`_looks_garbled()`: bounded, fast heuristic (no model call) — a shell-syntax-error
+marker (`"parse error near"`, `"unexpected token"`) immediately following a tool-call
+block, or a line mixing non-ASCII characters with shell metacharacters (`|`, `)`, `...`)
+above a fixed density — matches the actual captured opencode failure verbatim:
+`"pip3 install |)ك... ... ... Diskussion..."`. False positives are acceptable (worst
+case: a working-but-weird output gets retried once); false negatives are the failure
+mode that actually hurt this session, so the heuristic is tuned to over-trigger rather
+than under-trigger.
+
+**Revised after devex review**: every classification below prints an explicit `stderr`
+line when it fires, matching the base script's existing loud-stderr house style (e.g.
+the worktree-pre-check and `--resume` errors) — previously this was a silent in-process
+state change, so a human debugging a run at 3am had no way to tell "this escalated
+because of a circuit breaker" from "this escalated because nobody converged" short of a
+raw SQLite query against the ledger. All three are ALSO recorded as ledger tags
+(`circuit_breaker:quota_exhausted`, `circuit_breaker:broken_flag`,
+`circuit_breaker:garbled_output`) so they're queryable, not just printed:
+- **`quota_exhausted`** (kiro-cli's account-level monthly cap; cline's Credits balance
+  before the ClinePass fix): marks that `(provider, model)` pair `unavailable` for the
+  rest of the process run (an in-memory set, not a config file) — never retried against
+  the same dead account/balance mid-run. Prints `[circuit-breaker] {agent} marked
+  unavailable for the rest of this run: {reason}`. (P2 note: under `ThreadPoolExecutor`
   in the council pattern, the GIL makes the set itself thread-safe, but two
   near-simultaneous dispatches to the same dying provider could both start before either
   sees the exclusion — a benign race, not a correctness bug, since both just fail the
   same real way.)
-- **Garbled/gibberish output**: a cheap heuristic — the response contains an obvious
-  shell parse error string (`"parse error"`, `"syntax error"`) or a implausibly high
-  ratio of non-ASCII characters in what should be prose/code — triggers ONE automatic
-  retry on a DIFFERENT `RunnerSpec` with the SAME `.provider` (never the same `.name`
-  again; opencode's `nemotron-3.5-lightning-free` garbling isn't going to un-garble on
-  retry). Prints `[circuit-breaker] {agent}'s output looked garbled, retrying once on
-  {fallback.name}` to stderr. A second garble from the retry escalates immediately
-  rather than looping (and prints why).
+- **`broken_flag`** (kiro-cli's `--model` erroring "Method not found" in the installed
+  CLI version): log once, fall back to that roster entry's tool with NO `-m` override
+  (the tool's own default) rather than retrying the identical broken invocation. This is
+  a real, currently-open limitation (kiro-cli stays effectively single-model until the
+  CLI itself fixes the flag), not silently worked around.
+- **`garbled_output`**: triggers ONE automatic retry on a DIFFERENT `RunnerSpec` with
+  the SAME `.provider` (never the same `.name` again; opencode's
+  `nemotron-3.5-lightning-free` garbling isn't going to un-garble on retry). Prints
+  `[circuit-breaker] {agent}'s output looked garbled, retrying once on {fallback.name}`.
+  A second garble from the retry escalates immediately rather than looping.
 - **Per-model timeout**: default stays `DEFAULT_TIMEOUT` (420s), but the roster can carry
   a per-entry override — muse and opencode get more room; kilo (123s to a full working
   fix in the real race) doesn't need as much.
+
+**Deterministic lane selection**: when a roster has more than one entry, the implementer
+lane for round 0 is picked by `hashlib.sha256(task_slug.encode()).digest()[0] %
+len(roster)` — deterministic per task-slug (not random), so a `--resume` of the same
+task always reconstructs the same starting lane instead of silently picking a different
+model on retry.
 
 ## Design — Pattern B: parallel race + cross-vote council
 
@@ -259,6 +294,16 @@ reached if it wasn't).
 
 ## Testing
 
+- `classify_failure()`/`_looks_garbled()`: regression tests against the EXACT real
+  stderr/stdout strings captured live this session — cline's `"Insufficient balance.
+  Your Cline Credits balance is $0.01"`, kiro-cli's `"...monthly usage limit has been
+  reached..."`, kiro-cli's `"...failed to set model...: Method not found"`, and
+  opencode's actual garbled output (`"pip3 install |)ك... ... ... Diskussion rec and
+  blah  something] tests model and take a\nity\n\n an setting aaf89639 install pytest
+  --break-system-packages"`) — fixtures pulled from this session's real transcripts, not
+  synthesized.
+- Deterministic lane selection: the same `task_slug` always hashes to the same starting
+  roster index (reproducibility for `--resume`).
 - `critique_prompt()`: pure string-building, deterministic unit tests (task+diff in,
   exact expected prompt shape out).
 - `run_chain()`: fully mocked (fake `run_adversary` returning scripted
@@ -299,6 +344,27 @@ reached if it wasn't).
    real classifier — it will have false negatives (a genuinely garbled response that
    doesn't happen to contain those markers) and possibly rare false positives (legitimate
    code with unusual characters). Documented as a known limitation, not solved here.
+4. Whether `garbled_output` retries should also lower that lane's priority for FUTURE
+   tasks in the same process (a lightweight in-memory reliability score), or reset every
+   invocation — deferred to implementation; start per-invocation-only, this session's
+   real data is still too small to trust a persistent score yet.
+5. Whether Pattern A and Pattern B should ship together or Pattern A first, Pattern B
+   once Pattern A's real usage data exists to calibrate `consensus_threshold` against
+   something other than a guess — a real, reasonable phasing question, not resolved
+   here; a candidate for the implementation plan to decide, not this spec.
+
+## Provenance note
+
+A separate background research agent, working in parallel on unrelated Sakana Fugu
+research, independently wrote its own competing draft of this exact spec
+(`2026-09-27-swarm-loop-orchestration-design.md`, since marked superseded by itself
+after discovering this doc) — a real coordination miss (it was asked only to research,
+not design), not something to hide. Three genuinely good, concrete ideas from that draft
+are folded in above and credited here rather than silently absorbed: the unified
+`classify_failure()` classifier (including the `broken_flag` category for kiro-cli's
+broken `--model` flag, which this doc's original draft didn't have at all), the
+real-captured-string test fixtures, and deterministic hash-based lane selection for
+`--resume` reproducibility.
 
 ## DX Review (plan-devex-review)
 
