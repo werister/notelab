@@ -221,3 +221,19 @@ def test_trend_flat_within_band():
 def test_trend_insufficient_data():
     assert eval_skill_trend("s", [0.5]).trend == Trend.INSUFFICIENT
     assert eval_skill_trend("s", []).trend == Trend.INSUFFICIENT
+
+
+def test_runner_spec_has_a_provider_field_defaulting_empty():
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("opencode", "opencode", ["run", "{prompt}"])
+    assert spec.provider == ""  # non-breaking default for every existing single-model entry
+
+
+def test_known_runners_names_are_git_branch_safe():
+    # every RunnerSpec.name must survive `git check-ref-format --branch
+    # swarm/<name>/<slug>` -- no colons, no slashes, verified live this session that a
+    # colon breaks create_worktree's branch naming before any agent ever runs.
+    import re
+    for r in detect_runners():
+        assert re.fullmatch(r"[a-zA-Z0-9_.-]+", r.name), \
+            f"{r.name!r} is not git-branch-safe (colons/slashes break create_worktree)"

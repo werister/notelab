@@ -39,6 +39,9 @@ class RunnerSpec:
     args_template: list[str]       # {prompt} placeholder gets substituted
     available: bool = False
     path: str | None = None
+    provider: str = ""             # e.g. "kilo", "cline" -- explicit, never parsed from
+                                    # `name` (real model ids contain colons/slashes that
+                                    # would collide with any name-splitting scheme)
 
 
 # Known adversarial agent CLIs. args_template uses "{prompt}" as the substitution point.
