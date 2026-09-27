@@ -230,10 +230,16 @@ def test_runner_spec_has_a_provider_field_defaulting_empty():
 
 
 def test_known_runners_names_are_git_branch_safe():
-    # every RunnerSpec.name must survive `git check-ref-format --branch
-    # swarm/<name>/<slug>` -- no colons, no slashes, verified live this session that a
-    # colon breaks create_worktree's branch naming before any agent ever runs.
-    import re
+    # Every RunnerSpec.name must survive git's OWN branch-ref validation for
+    # swarm/<name>/<slug> -- delegates to `git check-ref-format --branch` directly
+    # rather than a hand-rolled regex: a prior version of this test used
+    # [a-zA-Z0-9_.-]+, which is under-inclusive (accepts a leading/trailing ".",
+    # "..", and a leading "-", all of which git itself rejects or mishandles) --
+    # exactly the gap this test exists to catch before real composite names land.
+    import subprocess
     for r in detect_runners():
-        assert re.fullmatch(r"[a-zA-Z0-9_.-]+", r.name), \
-            f"{r.name!r} is not git-branch-safe (colons/slashes break create_worktree)"
+        candidate = f"swarm/{r.name}/some-task-slug"
+        result = subprocess.run(["git", "check-ref-format", "--branch", candidate],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, \
+            f"{r.name!r} is not git-branch-safe: {result.stderr.strip()}"
