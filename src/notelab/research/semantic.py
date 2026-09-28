@@ -18,6 +18,12 @@ new requirement is a `MISTRAL_API_KEY` (or an explicit `api_key=`) at call time,
 call. No key -> SemanticExpansionError, not a silent empty-dict fallback: a caller who asked
 for semantic expansion and got none back (because auth failed) must be told, not quietly
 downgraded to lexical-only without knowing.
+
+Each call first resolves the model id against a live GET /v1/models, so a stale
+MISTRAL_EMBED_MODEL fails as MistralModelNotFoundError ("here are the ids that exist")
+instead of as a generic HTTP 400 from the embeddings endpoint that doesn't reliably
+name the offending model. A failing *listing* (auth/network) stays a plain
+SemanticExpansionError — an unreadable listing is no evidence about the model id.
 """
 from __future__ import annotations
 
@@ -32,12 +38,77 @@ from .quality import SourceFeatures, _content_terms
 
 MISTRAL_EMBED_MODEL = "mistral-embed"
 _EMBEDDINGS_URL = "https://api.mistral.ai/v1/embeddings"
+_MODELS_URL = "https://api.mistral.ai/v1/models"
 
 
 class SemanticExpansionError(RuntimeError):
     """No key, a network failure, or a malformed API response. Never swallowed into
     an empty expansions dict — that would silently look identical to 'nothing was
     semantically related', which is a different (and false) claim."""
+
+
+class MistralModelNotFoundError(SemanticExpansionError):
+    """The configured model id is absent from the live GET /v1/models listing — i.e.
+    MISTRAL_EMBED_MODEL is stale, renamed, or misspelled.
+
+    A distinct subclass so a caller (or a human reading the traceback) can tell "go
+    fix your model id" apart from "your key/network is broken", instead of both
+    surfacing as one generic HTTP failure. It is a *subclass* rather than a sibling
+    so the existing contract is unchanged: `except SemanticExpansionError` still
+    catches everything this module raises, and nothing silently returns empty.
+
+    Deliberately NOT raised when the listing itself fails (auth, network, malformed
+    JSON) — an unreachable listing is no evidence about the model id, and reporting
+    "model not found" there would misdiagnose the actual fault."""
+
+
+def _available_model_ids(key: str, timeout: float) -> list[str]:
+    """GET /v1/models and return the ids visible to this key. Raises
+    SemanticExpansionError — never MistralModelNotFoundError — when the listing
+    itself can't be read, so a transient outage or a bad key is never misreported
+    as a bad model id."""
+    req = urllib.request.Request(
+        _MODELS_URL, method="GET", headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:500]
+        if e.code in (401, 403):
+            raise SemanticExpansionError(
+                f"Mistral model listing rejected the API key (HTTP {e.code}) — cannot "
+                f"verify the embedding model id. Check MISTRAL_API_KEY. {detail}") from e
+        raise SemanticExpansionError(
+            f"Mistral model listing HTTP {e.code} — could not verify the embedding "
+            f"model id. This is a listing failure, not a missing model: {detail}") from e
+    except urllib.error.URLError as e:
+        raise SemanticExpansionError(
+            f"Mistral model listing request failed: {e.reason} — could not verify the "
+            f"embedding model id, so a stale MISTRAL_EMBED_MODEL would otherwise only "
+            f"surface as a possibly-misleading HTTP error on the embeddings call "
+            f"itself.") from e
+
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise SemanticExpansionError(
+            f"Mistral model listing: expected a 'data' list, got "
+            f"{type(data).__name__} — cannot verify the embedding model id")
+    return [entry["id"] for entry in data if isinstance(entry, dict) and "id" in entry]
+
+
+def _assert_model_available(model: str, key: str, timeout: float) -> None:
+    """Resolve `model` against the live listing before we spend an embeddings call on
+    it. Mistral's embeddings error for an unknown id is a generic HTTP 400 whose
+    message doesn't reliably name the model, so a stale MISTRAL_EMBED_MODEL otherwise
+    surfaces as a confusing 400 from the embeddings endpoint. Checking the listing
+    first turns that into an unambiguous, actionable 'here are the ids that do
+    exist' error."""
+    ids = _available_model_ids(key, timeout)
+    if model not in ids:
+        available = ", ".join(sorted(i for i in ids if i)) or "(none returned)"
+        raise MistralModelNotFoundError(
+            f"Mistral model {model!r} is not in the live /v1/models listing — "
+            f"MISTRAL_EMBED_MODEL is stale or misspelled. Available: {available}")
 
 
 def _resolve_api_key(api_key: str | None) -> str:
@@ -53,10 +124,17 @@ def embed_texts(texts: list[str], api_key: str | None = None,
                 model: str = MISTRAL_EMBED_MODEL, timeout: float = 30.0) -> list[list[float]]:
     """Embed a batch of strings via the Mistral embeddings API. Returns one vector per
     input, in the same order. Raises SemanticExpansionError on any failure — auth,
-    network, or a response shape that doesn't match what we asked for."""
+    network, or a response shape that doesn't match what we asked for.
+
+    The model id is resolved against a live GET /v1/models *before* the embeddings
+    call, so a stale `model`/`MISTRAL_EMBED_MODEL` raises MistralModelNotFoundError
+    (a SemanticExpansionError subclass) naming the ids that do exist, rather than
+    surfacing as a generic HTTP 400 from the embeddings endpoint that doesn't
+    reliably identify which model was wrong."""
     if not texts:
         return []
     key = _resolve_api_key(api_key)
+    _assert_model_available(model, key, timeout)
     body = json.dumps({"model": model, "input": texts}).encode("utf-8")
     req = urllib.request.Request(
         _EMBEDDINGS_URL, data=body, method="POST",
