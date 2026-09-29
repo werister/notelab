@@ -146,6 +146,16 @@ def test_registry_ships_all_ten_families():
             "muse", "cline", "kilo", "kiro-cli"} <= names
 
 
+def test_registry_includes_a_local_ollama_runner():
+    # A local model (no API key, no per-token cost, no rate limit) belongs in the
+    # armada alongside the hosted CLIs -- ollama's stdout is clean when captured via
+    # subprocess with separate stdout/stderr pipes (confirmed live: the spinner
+    # animation goes to stderr only), so it needs no special wrapping to be a normal
+    # RunnerSpec like every other entry.
+    names = {r.name for r in detect_runners()}
+    assert "ollama-llama3.2" in names
+
+
 def test_template_with_cwd_placeholder_and_no_cwd_given_is_skipped():
     from notelab.research.evals import RunnerSpec
     spec = RunnerSpec("needs-cwd", "sh", ["-c", "{prompt}", "{cwd}"],

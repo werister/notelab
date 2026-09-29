@@ -77,6 +77,14 @@ KNOWN_RUNNERS: list[RunnerSpec] = [
     # model or every dispatch fails before reaching the research question.
     RunnerSpec("kilo", "kilo", ["run", "-m", "kilo/kilo-auto/free", "{prompt}"]),
     RunnerSpec("kiro-cli", "kiro-cli", ["chat", "{prompt}", "--no-interactive"]),
+    # A local model: no API key, no per-token cost, no rate limit, no quota to run
+    # out of -- genuinely free in every sense the other nine aren't. `ollama run
+    # <model> <prompt>` is a real one-shot, non-interactive invocation (confirmed
+    # live: it exits after printing the answer, no REPL). Its spinner animation
+    # writes to stderr only, so stdout is clean with the normal separate-pipe
+    # capture run_adversary already uses -- no special handling needed, unlike a
+    # naive `2>&1` test which merges the streams and looks garbled.
+    RunnerSpec("ollama-llama3.2", "ollama", ["run", "llama3.2:1b", "{prompt}"]),
 ]
 
 
