@@ -67,6 +67,7 @@ class NlmxAdapter:
         # `nlm notebook create` has no --quiet/--json; output is two lines:
         # "✓ Created notebook: <title>" then "  ID: <uuid>". Parse the id out of that,
         # don't assume the id is the bare last line.
+        # `title` is a POSITIONAL arg: `nlm` has no `--title` flag — don't "fix" this.
         r = self._run(["notebook", "create", title], timeout=120)
         if r.returncode != 0:
             raise NlmxError(f"notebook create failed: {r.stderr.strip() or r.stdout.strip()}")
