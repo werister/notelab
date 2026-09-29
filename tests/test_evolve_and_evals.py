@@ -1,5 +1,6 @@
 """Tests for self-evolving sources + skill trend evals — offline, deterministic."""
 from datetime import datetime, timedelta, timezone
+import time
 
 from notelab.research.evals import (
     Trend,
@@ -139,9 +140,75 @@ def test_template_without_prompt_placeholder_is_skipped_not_run():
     assert res.skipped_reason and "{prompt}" in res.skipped_reason
 
 
-def test_registry_ships_all_six_families():
+def test_registry_ships_all_ten_families():
     names = {r.name for r in detect_runners()}
-    assert {"opencode", "copilot", "claude", "codex", "qoder", "qwen"} <= names
+    assert {"opencode", "copilot", "claude", "codex", "qoder", "qwen",
+            "muse", "cline", "kilo", "kiro-cli"} <= names
+
+
+def test_registry_includes_a_local_ollama_runner():
+    # A local model (no API key, no per-token cost, no rate limit) belongs in the
+    # armada alongside the hosted CLIs -- ollama's stdout is clean when captured via
+    # subprocess with separate stdout/stderr pipes (confirmed live: the spinner
+    # animation goes to stderr only), so it needs no special wrapping to be a normal
+    # RunnerSpec like every other entry.
+    names = {r.name for r in detect_runners()}
+    assert "ollama-llama3.2" in names
+
+
+def test_template_with_cwd_placeholder_and_no_cwd_given_is_skipped():
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("needs-cwd", "sh", ["-c", "{prompt}", "{cwd}"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "echo hi")  # no cwd= passed
+    assert res.available is True
+    assert res.returncode is None          # never executed
+    assert res.skipped_reason and "{cwd}" in res.skipped_reason
+
+
+def test_cwd_placeholder_is_substituted_when_cwd_given(tmp_path):
+    from notelab.research.evals import RunnerSpec
+    marker = tmp_path / "cwd-seen.txt"
+    spec = RunnerSpec("echo-cwd", "sh",
+                      ["-c", f"pwd > {marker}; echo {{prompt}}"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "hello", cwd=str(tmp_path))
+    assert res.returncode == 0
+    assert marker.read_text().strip() == str(tmp_path.resolve())
+
+
+def test_timeout_kills_process_group_including_grandchildren(tmp_path):
+    from notelab.research.evals import RunnerSpec
+    # The child backgrounds a grandchild that touches `marker` ~2s after the parent's
+    # own 1s timeout fires. The check below MUST happen after that T+2s deadline, not
+    # before it: if it ran too early (as an earlier version of this test did, with a
+    # T+5s deadline checked at T+3s), the marker would legitimately not exist yet
+    # regardless of whether the process-group kill worked at all -- a tautological
+    # test that passes even with a real regression to killing only the direct child.
+    marker = tmp_path / "grandchild_alive"
+    script = tmp_path / "spawn.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"(sleep 2; touch {marker}) &\n"
+        "sleep 5\n"
+    )
+    script.chmod(0o755)
+    spec = RunnerSpec("spawner", str(script), ["{prompt}"], available=True, path=str(script))
+
+    res = run_adversary(spec, "unused", timeout=1)
+    assert res.timed_out is True
+
+    time.sleep(2.5)  # T+3.5s total; past the grandchild's T+2s deadline, with margin
+    assert not marker.exists(), "grandchild survived the timeout kill"
+
+
+def test_research_runners_never_carry_write_trust_flags():
+    # Component A only ever asks a research question -- it must never be handed a
+    # flag that grants an agent filesystem write trust.
+    dangerous = {"--yolo", "--auto", "-a", "--trust-all-tools"}
+    for r in detect_runners():
+        assert not (dangerous & set(r.args_template)), \
+            f"{r.name} carries a write-trust flag in the research-only runner table"
 
 
 def test_trend_improving():
@@ -164,3 +231,25 @@ def test_trend_flat_within_band():
 def test_trend_insufficient_data():
     assert eval_skill_trend("s", [0.5]).trend == Trend.INSUFFICIENT
     assert eval_skill_trend("s", []).trend == Trend.INSUFFICIENT
+
+
+def test_runner_spec_has_a_provider_field_defaulting_empty():
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("opencode", "opencode", ["run", "{prompt}"])
+    assert spec.provider == ""  # non-breaking default for every existing single-model entry
+
+
+def test_known_runners_names_are_git_branch_safe():
+    # Every RunnerSpec.name must survive git's OWN branch-ref validation for
+    # swarm/<name>/<slug> -- delegates to `git check-ref-format --branch` directly
+    # rather than a hand-rolled regex: a prior version of this test used
+    # [a-zA-Z0-9_.-]+, which is under-inclusive (accepts a leading/trailing ".",
+    # "..", and a leading "-", all of which git itself rejects or mishandles) --
+    # exactly the gap this test exists to catch before real composite names land.
+    import subprocess
+    for r in detect_runners():
+        candidate = f"swarm/{r.name}/some-task-slug"
+        result = subprocess.run(["git", "check-ref-format", "--branch", candidate],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, \
+            f"{r.name!r} is not git-branch-safe: {result.stderr.strip()}"

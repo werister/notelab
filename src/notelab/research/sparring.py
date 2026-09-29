@@ -16,9 +16,11 @@ production it wraps the adversarial CLIs + the nlmx research path.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .evals import RunnerResult
 from .quality import QualityReport, QualityWeights, SourceFeatures, score_sources
 
 
@@ -33,11 +35,41 @@ class FamilyResult:
     def as_dict(self) -> dict:
         return {"family": self.family, "available": self.available,
                 "error": self.error,
-                "report": self.report.as_dict() if self.report else None}
+                "report": self.report.as_dict() if self.report else None,
+                "sources": [{"id": s.id, "url": s.url} for s in self.sources]}
 
 
 # family -> (sources, meta). meta may carry {"available": bool, "error": str}.
 FamilyRunner = Callable[[str, str], tuple[list[SourceFeatures], dict]]
+
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _sources_from_adversary_output(result: RunnerResult, question: str) -> list[SourceFeatures]:
+    """Turn one adversarial CLI's raw stdout into SourceFeatures score_sources() can
+    rank. Real answers rarely come back as structured JSON -- extract cited URLs with
+    a bounded content snippet around each; if the CLI answered in prose with no links
+    at all, that's still a real (if weaker) outcome, not a non-event, so the whole
+    stdout becomes one sourceless SourceFeatures rather than an empty list. A
+    genuinely empty answer still yields an empty list -- there is nothing to score."""
+    text = result.stdout or ""
+    matches = list(_URL_RE.finditer(text))
+    if not matches:
+        if not text.strip():
+            return []
+        return [SourceFeatures(id=f"{result.runner}-0", title=f"{result.runner} answer",
+                               url="", content=text[:2000])]
+    out = []
+    for i, m in enumerate(matches):
+        # m.start()/m.end() are this SPECIFIC match's real position -- not
+        # text.find(url), which would always return the FIRST occurrence and give
+        # every repeat citation of the same URL the wrong (first one's) snippet.
+        start = max(0, m.start() - 200)
+        end = min(len(text), m.end() + 200)
+        out.append(SourceFeatures(id=f"{result.runner}-{i}", title=f"{result.runner} source {i}",
+                                  url=m.group(0), content=text[start:end]))
+    return out
 
 
 @dataclass
