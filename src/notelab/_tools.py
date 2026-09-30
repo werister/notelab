@@ -19,8 +19,12 @@ from .mcp_stdio import StdioMCPServer
 from .nlmx_adapter import NlmxAdapter, NlmxError
 from .research.ab import Strategy, run_ab, suggest_next_prompt
 from .research.ablation import quick_assess
-from .research.evals import (detect_runners, detect_runners_with_reliability,
-                             eval_skill_trend, run_adversary)
+from .research.evals import (
+    detect_runners,
+    detect_runners_with_reliability,
+    eval_skill_trend,
+    run_adversary,
+)
 from .research.evolve import EvolutionPolicy, plan_evolution
 from .research.quality import QualityWeights, score_sources
 from .research.sparring import _sources_from_adversary_output, run_sparring
