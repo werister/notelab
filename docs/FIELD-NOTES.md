@@ -141,7 +141,7 @@ ambiguous zone — Laya was consulted for every one), and returned **29 load-bea
 redundant** — a real, differentiated split, not the original all-41-`redundant` result, and not
 a suspicious all-load-bearing rubber stamp either.
 
-### 9. `research_spar`'s "model families" never actually run through their named CLI
+### 9. `research_spar`'s "model families" never actually run through their named CLI — FIXED 2026-09-30
 The module docstring and tool description ("run one prompt across model families... which
 family finds the best sources") strongly implies each family's own AI backend does the
 research. It doesn't: `ToolLogic.spar`'s `family_runner` calls `detect_runners()` only to
@@ -158,6 +158,12 @@ so every sparring session is hardcoded to the most expensive research mode with 
 option. Not fixed here — routing each family through its own actual CLI (rather than NotebookLM)
 would be a real feature build, not a bug fix; flagging so the "leaderboard" isn't trusted as
 real model-family comparison until it is.
+
+**Fix applied**: `ToolLogic.spar()`'s `family_runner` now calls `run_adversary(spec, p, ...)`
+per family — each family's research genuinely goes through its own CLI, not a shared
+NotebookLM path. Confirmed via `grep -n "run_adversary" src/notelab/_tools.py`. The
+`Strategy.mode` / no fast-mode-for-spar limitation noted in the original paragraph is
+still real and still unfixed.
 
 ### 10. Blind third-party validation (qoder, zero prior context) — `--help` bug FIXED, three real gaps documented
 Per request: gave `qoder` (a coding-agent CLI with zero context on this repo or conversation) a
