@@ -204,7 +204,12 @@ class ToolLogic:
         def family_runner(family: str, p: str):
             spec = specs.get(family)
             if spec is None or not spec.available:
-                return [], {"available": False, "error": f"{family} not installed"}
+                # spec.skipped_reason carries a REAL diagnostic (e.g. a reliability-
+                # filter exclusion for quota exhaustion) when one is available -- only
+                # fall back to the generic "not installed" when the binary genuinely
+                # isn't on PATH and no filter has anything more specific to say.
+                reason = spec.skipped_reason if spec is not None else None
+                return [], {"available": False, "error": reason or f"{family} not installed"}
             result = run_adversary(spec, p, timeout=180, cwd=_notelab_repo_root())
             if result.timed_out:
                 return [], {"available": True, "error": "timed out"}

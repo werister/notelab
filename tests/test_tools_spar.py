@@ -64,6 +64,31 @@ def test_spar_records_unavailable_family_without_calling_run_adversary(monkeypat
     tool = ToolLogic(adapter=object(), store=_FakeStore())
     out = json.loads(tool.spar("q", "p"))
     assert out["results"][0]["available"] is False
+    # no skipped_reason was set on this spec -- generic fallback text is correct here
+    assert out["results"][0]["error"] == "kilo not installed"
+
+
+def test_spar_surfaces_reliability_skip_reason_not_generic_not_installed(monkeypatch):
+    """A family that IS on PATH but was excluded by the cross-repo reliability filter
+    (detect_runners_with_reliability marks it available=False with a skipped_reason,
+    e.g. quota exhaustion reported in [redacted-private-project]'s ledger) must surface THAT reason in
+    spar()'s output, not the generic 'not installed' text -- the whole point of the
+    reliability filter is to tell the caller WHY a family was skipped."""
+    specs = [RunnerSpec("codex", "codex", ["exec", "{prompt}"], available=False,
+                        path="/usr/bin/codex", provider="codex",
+                        skipped_reason="recent quota exhaustion reported in [redacted-private-project]'s agent ledger")]
+    monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("run_adversary must not be called for an unavailable family")
+
+    monkeypatch.setattr(tools_mod, "run_adversary", fail_if_called)
+
+    tool = ToolLogic(adapter=object(), store=_FakeStore())
+    out = json.loads(tool.spar("q", "p"))
+    assert out["results"][0]["available"] is False
+    assert "quota" in out["results"][0]["error"].lower()
+    assert out["results"][0]["error"] != "codex not installed"
 
 
 def test_spar_surfaces_error_when_returncode_is_none_not_zero(monkeypatch):
