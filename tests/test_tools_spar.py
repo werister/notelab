@@ -1,6 +1,8 @@
 """spar() must dispatch each family through its OWN CLI (run_adversary), not the
-shared NotebookLM path -- fixes FIELD-NOTES.md gap #9. Offline: detect_runners and
-run_adversary are both monkeypatched, no real CLI or NotebookLM call."""
+shared NotebookLM path -- fixes FIELD-NOTES.md gap #9. Offline: spar() resolves its
+runners via detect_runners_with_reliability() (PATH detection + the cross-repo
+reliability filter), and run_adversary, both monkeypatched here, no real CLI, no
+real [redacted-private-project] ledger, no NotebookLM call."""
 import json
 
 import notelab._tools as tools_mod
@@ -19,7 +21,7 @@ def test_spar_dispatches_each_family_through_its_own_cli(monkeypatch):
         RunnerSpec("cline", "cline", ["--auto-approve", "false", "{prompt}"],
                   available=True, path="/x/cline"),
     ]
-    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+    monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
 
     calls = []
 
@@ -52,7 +54,7 @@ def test_spar_dispatches_each_family_through_its_own_cli(monkeypatch):
 
 def test_spar_records_unavailable_family_without_calling_run_adversary(monkeypatch):
     specs = [RunnerSpec("kilo", "kilo", ["run", "{prompt}"], available=False, path=None)]
-    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+    monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
 
     def fail_if_called(*a, **k):
         raise AssertionError("run_adversary must not be called for an unavailable family")
@@ -70,7 +72,7 @@ def test_spar_surfaces_error_when_returncode_is_none_not_zero(monkeypatch):
     # apart from a clean returncode=0 success, since both are falsy. This must
     # surface the real stderr, not silently report a clean empty success.
     specs = [RunnerSpec("muse", "muse", ["exec", "{prompt}"], available=True, path="/x/muse")]
-    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+    monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
 
     def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
         return RunnerResult(spec.name, True, None, stdout="", stderr="FileNotFoundError: gone")
@@ -84,7 +86,7 @@ def test_spar_surfaces_error_when_returncode_is_none_not_zero(monkeypatch):
 
 def test_spar_surfaces_skipped_reason_instead_of_reporting_success(monkeypatch):
     specs = [RunnerSpec("kiro-cli", "kiro-cli", [], available=True, path="/x/kiro-cli")]
-    monkeypatch.setattr(tools_mod, "detect_runners", lambda: specs)
+    monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
 
     def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
         return RunnerResult(spec.name, True, None, skipped_reason="no {prompt} placeholder")
