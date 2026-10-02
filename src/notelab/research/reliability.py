@@ -78,12 +78,14 @@ def filter_known_unreliable(
     try:
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
-        time_col, time_kind = _time_column(conn)
-        rows = conn.execute(
-            f"SELECT agent, note_text, {time_col} AS ts FROM agent_notes "
-            f"ORDER BY {time_col} DESC"
-        ).fetchall()
-        conn.close()
+        try:
+            time_col, time_kind = _time_column(conn)
+            rows = conn.execute(
+                f"SELECT agent, note_text, {time_col} AS ts FROM agent_notes "
+                f"ORDER BY {time_col} DESC"
+            ).fetchall()
+        finally:
+            conn.close()
     except sqlite3.Error:
         return specs
 
@@ -104,12 +106,26 @@ def filter_known_unreliable(
 
     out = []
     for spec in specs:
-        provider = spec.provider or spec.name
-        if provider in quota_flagged or spec.name in quota_flagged:
+        if _spec_matches_any(spec, quota_flagged):
             out.append(_mark_unavailable(spec))
         else:
             out.append(spec)
     return out
+
+
+def _spec_matches_any(spec: RunnerSpec, agents: set[str]) -> bool:
+    """True if any flagged ledger agent identifies this spec: an exact match on
+    spec.name/spec.provider, or a family-prefix match ('<name>-'/'<provider>-') --
+    the real ledger records model variants (e.g. 'kilo-auto', 'cline-glm-5-3'),
+    never the bare family name, so prefix matching is required without ever
+    hardcoding specific variant ids."""
+    keys = {k for k in (spec.name, spec.provider) if k}
+    for agent in agents:
+        if agent in keys:
+            return True
+        if any(agent.startswith(f"{key}-") for key in keys):
+            return True
+    return False
 
 
 def _mark_unavailable(spec: RunnerSpec) -> RunnerSpec:

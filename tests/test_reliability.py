@@ -147,3 +147,76 @@ def test_table_with_neither_time_column_is_a_noop_not_an_error(tmp_path):
                         path="/usr/bin/codex", provider="codex")]
     out = filter_known_unreliable(specs, mml_ledger_path=ledger, now_iso="2026-09-30T12:00:00+00:00")
     assert out[0].available is True
+
+
+def test_family_prefix_variant_with_recent_quota_note_is_marked_unavailable(tmp_path):
+    """The real [redacted-private-project] ledger records variants like 'kilo-auto', never a bare
+    'kilo' -- a note for a variant must still flag the family's RunnerSpec
+    (name='kilo'), via family-prefix matching ('kilo-' prefix), not just exact
+    name/provider equality."""
+    ledger = tmp_path / "mml-ledger.db"
+    _make_mml_ledger(ledger, [
+        ("kilo-auto", "hit monthly usage limit", "2026-09-30T10:00:00+00:00"),
+    ])
+    specs = [RunnerSpec("kilo", "kilo", ["run", "-m", "kilo/kilo-auto/free", "{prompt}"],
+                        available=True, path="/usr/bin/kilo", provider="kilo")]
+    out = filter_known_unreliable(specs, mml_ledger_path=ledger, now_iso="2026-09-30T12:00:00+00:00")
+    assert out[0].available is False
+    assert "quota" in (out[0].skipped_reason or "").lower()
+
+
+def test_family_prefix_variant_with_stale_quota_note_is_left_untouched(tmp_path):
+    """A stale (>14 day) quota note for a variant must NOT flip the family spec --
+    exercises the window check still applies under family-prefix matching."""
+    ledger = tmp_path / "mml-ledger.db"
+    _make_mml_ledger(ledger, [
+        ("kilo-auto", "hit monthly usage limit", "2026-08-01T10:00:00+00:00"),
+    ])
+    specs = [RunnerSpec("kilo", "kilo", ["run", "-m", "kilo/kilo-auto/free", "{prompt}"],
+                        available=True, path="/usr/bin/kilo", provider="kilo")]
+    out = filter_known_unreliable(specs, mml_ledger_path=ledger, now_iso="2026-09-30T12:00:00+00:00")
+    assert out[0].available is True
+
+
+def test_filter_known_unreliable_closes_connection_on_time_column_error(tmp_path, monkeypatch):
+    """If _time_column(conn) raises (e.g. a corrupt/foreign schema causing some other
+    sqlite3.Error upstream of the known neither-column case), the connection it opened
+    must still be closed -- no leaked sqlite3 connection on the error path."""
+    import sqlite3 as sqlite3_module
+
+    from notelab.research import reliability
+
+    ledger = tmp_path / "mml-ledger.db"
+    conn = sqlite3_module.connect(str(ledger))
+    conn.execute("CREATE TABLE agent_notes (id INTEGER PRIMARY KEY, agent TEXT, note_text TEXT)")
+    conn.commit()
+    conn.close()
+
+    opened_connections = []
+    real_connect = sqlite3_module.connect
+
+    def tracking_connect(*args, **kwargs):
+        c = real_connect(*args, **kwargs)
+        opened_connections.append(c)
+        return c
+
+    monkeypatch.setattr(reliability.sqlite3, "connect", tracking_connect)
+
+    def boom(_conn):
+        raise sqlite3_module.OperationalError("simulated failure reading schema")
+
+    monkeypatch.setattr(reliability, "_time_column", boom)
+
+    specs = [RunnerSpec("codex", "codex", ["exec", "{prompt}"], available=True,
+                        path="/usr/bin/codex", provider="codex")]
+    filter_known_unreliable(specs, mml_ledger_path=ledger, now_iso="2026-09-30T12:00:00+00:00")
+
+    assert len(opened_connections) == 1
+    # sqlite3.Connection has no public "closed" attribute; a closed connection
+    # raises ProgrammingError on any further use.
+    try:
+        opened_connections[0].execute("SELECT 1")
+        closed = False
+    except sqlite3_module.ProgrammingError:
+        closed = True
+    assert closed, "connection opened by filter_known_unreliable was never closed"

@@ -95,7 +95,8 @@ def detect_runners(candidates: list[RunnerSpec] | None = None) -> list[RunnerSpe
     for spec in (candidates or KNOWN_RUNNERS):
         path = shutil.which(spec.bin)
         out.append(RunnerSpec(spec.name, spec.bin, list(spec.args_template),
-                              available=path is not None, path=path))
+                              available=path is not None, path=path,
+                              provider=spec.provider))
     return out
 
 
