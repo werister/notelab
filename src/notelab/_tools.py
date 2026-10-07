@@ -1,7 +1,7 @@
 """
 Backend-agnostic tool registration.
 
-One definition of the 13 tools, bound onto the bundled stdlib stdio server
+One definition of the 14 tools, bound onto the bundled stdlib stdio server
 (`mcp_stdio.StdioMCPServer`). `server.py` can additionally bind the same callables
 onto the optional official SDK, but the bundled path here needs nothing but stdlib —
 that is what lets the package "fully load" without linking any external MCP repo.
@@ -49,6 +49,21 @@ def _notelab_repo_root() -> str:
     return str(Path(__file__).resolve().parents[2])
 
 
+def _with_semantic_expansions(question, sources, w):
+    """Opt-in semantic relevance: enrich weights with live Mistral term
+    expansions. Returns (weights, error_payload_or_None) — a missing key or
+    API failure surfaces as a JSON error, never an exception, so the caller
+    can fall back to the default stdlib-only path."""
+    from .research.semantic import SemanticExpansionError, semantic_term_expansions
+    try:
+        result = semantic_term_expansions(question, sources)
+    except SemanticExpansionError as e:
+        return w, {"error": str(e), "hint": "set MISTRAL_API_KEY or drop "
+                                            "semantic_expansions for the stdlib-only path."}
+    w.term_expansions = result.expansions
+    return w, None
+
+
 class ToolLogic:
     """Holds the adapter + store and implements each tool as a method returning JSON.
 
@@ -85,13 +100,60 @@ class ToolLogic:
         return json.dumps(result, indent=2)
 
     def score_notebook(self, notebook_id: str, question: str = "",
-                       weights: dict | None = None) -> str:
+                       weights: dict | None = None,
+                       semantic_expansions: bool = False) -> str:
         w = _weights_from(weights)
         sources = self.adapter.list_sources(notebook_id)
         for s in sources[:15]:
             if not s.content:
                 s.content = self.adapter.source_content(s.id)
-        return json.dumps(score_sources(sources, question, w).as_dict(), indent=2)
+        if semantic_expansions:
+            w, err = _with_semantic_expansions(question, sources, w)
+            if err is not None:
+                return json.dumps(err, indent=2)
+        report = score_sources(sources, question, w).as_dict()
+        if semantic_expansions:
+            report["semantic_expansions_applied"] = True
+            report["semantic_expansion_count"] = sum(len(v) for v in w.term_expansions.values())
+        return json.dumps(report, indent=2)
+
+    def ingest_codebase(self, repo: str, notebook_id: str | None = None,
+                        title: str | None = None, max_files: int = 200) -> str:
+        """Ingest a codebase (GitHub URL or local path) and add its digest as a
+        NotebookLM source. Positive capability to pair with evolve_notebook's
+        curation: this ADDS knowledge (structure, APIs, quality signals) where
+        evolve only prunes. Without notebook_id, creates '[codebase] <name>'.
+
+        The digest text is bounded (structure summaries, capped lists) but a
+        pathological repo could still balloon argv, so text is capped at
+        100k chars with a visible truncation note."""
+        from .research.codebase_ingest import CodebaseIngester
+        try:
+            digest = CodebaseIngester(max_files=max_files).ingest(repo)
+        except Exception as e:  # ValueError (bad URL) or network failure
+            return json.dumps({"error": f"ingest failed for {repo!r}: {e}"}, indent=2)
+        text = digest.to_text()
+        truncated = False
+        if len(text) > 100_000:
+            text = text[:100_000] + "\n\n*... digest truncated at 100k chars*"
+            truncated = True
+        try:
+            nb = notebook_id or self.adapter.create_notebook(
+                f"[codebase] {digest.repo_name}")
+            ok, msg = self.adapter.add_source(
+                nb, text, title=title or f"Codebase: {digest.repo_name}")
+        except NlmxError as e:
+            return json.dumps({"error": str(e)}, indent=2)
+        return json.dumps({
+            "repo": repo, "repo_name": digest.repo_name,
+            "default_branch": digest.default_branch,
+            "files": len(digest.files), "total_lines": digest.total_lines,
+            "languages": digest.languages,
+            "test_file_ratio": digest.test_file_ratio,
+            "doc_coverage": digest.doc_coverage,
+            "digest_chars": len(text), "truncated": truncated,
+            "notebook_id": nb, "added": ok, "message": msg,
+        }, indent=2)
 
     def history(self, experiment_id: int | None = None, limit: int = 20) -> str:
         if experiment_id is not None:
@@ -125,7 +187,8 @@ class ToolLogic:
         return json.dumps(out, indent=2)
 
     def assess_notebook(self, notebook_id: str, question: str = "", mode: str = "fast",
-                        weights: dict | None = None, use_laya: bool = False) -> str:
+                        weights: dict | None = None, use_laya: bool = False,
+                        semantic_expansions: bool = False) -> str:
         """Lightweight (fast) or full (deep) value assessment of an existing
         notebook's CURRENT source set — same engine research_run_experiment wires
         into every arm automatically, exposed here for on-demand / deep calls.
@@ -138,16 +201,26 @@ class ToolLogic:
 
         use_laya: opt-in tie-breaker for ablation's ambiguous zone (mode="deep"
         only, ignored in mode="fast" — see quick_assess). Requires laya-mlx
-        installed (pip install 'notelab[laya]'); raises LayaJudgeError if not."""
+        installed (pip install 'notelab[laya]'); raises LayaJudgeError if not.
+
+        semantic_expansions: opt-in Mistral-embedding term expansions folded
+        into relevance scoring (both modes). Requires MISTRAL_API_KEY; any
+        failure returns a JSON error suggesting the default stdlib-only path."""
         w = _weights_from(weights)
         sources = self.adapter.list_sources(notebook_id)
         to_fill = sources if mode.lower() == "deep" else sources[:15]
         for s in to_fill:
             if not s.content:
                 s.content = self.adapter.source_content(s.id)
-        return json.dumps(
-            quick_assess(sources, question, weights=w, mode=mode, use_laya=use_laya),
-            indent=2)
+        if semantic_expansions:
+            w, err = _with_semantic_expansions(question, sources, w)
+            if err is not None:
+                return json.dumps(err, indent=2)
+        out = quick_assess(sources, question, weights=w, mode=mode, use_laya=use_laya)
+        if semantic_expansions:
+            out["semantic_expansions_applied"] = True
+            out["semantic_expansion_count"] = sum(len(v) for v in w.term_expansions.values())
+        return json.dumps(out, indent=2)
 
     def eval_skill(self, strategy_name: str) -> str:
         return json.dumps(eval_skill_trend(strategy_name,
@@ -242,7 +315,11 @@ _SCHEMAS: dict[str, dict] = {
                        "weights": {"type": "object"}}},
     "research_score_notebook": {"type": "object", "required": ["notebook_id"],
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
-                       "weights": {"type": "object"}}},
+                       "weights": {"type": "object"},
+                       "semantic_expansions": {"type": "boolean"}}},
+    "research_ingest_codebase": {"type": "object", "required": ["repo"],
+        "properties": {"repo": {"type": "string"}, "notebook_id": {"type": "string"},
+                       "title": {"type": "string"}, "max_files": {"type": "integer"}}},
     "research_history": {"type": "object",
         "properties": {"experiment_id": {"type": "integer"}, "limit": {"type": "integer"}}},
     "research_suggest_prompt": {"type": "object", "required": ["question"],
@@ -254,7 +331,8 @@ _SCHEMAS: dict[str, dict] = {
     "research_assess": {"type": "object", "required": ["notebook_id"],
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
                        "mode": {"type": "string"}, "weights": {"type": "object"},
-                       "use_laya": {"type": "boolean"}}},
+                       "use_laya": {"type": "boolean"},
+                       "semantic_expansions": {"type": "boolean"}}},
     "research_eval_skill": {"type": "object", "required": ["strategy_name"],
         "properties": {"strategy_name": {"type": "string"}}},
     "research_adversarial_run": {"type": "object", "required": ["prompt"],
@@ -277,6 +355,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "research_run_experiment": "A/B-test research prompt strategies on one question; score "
         "each run's SOURCES by data quality; rank; record to the ledger.",
     "research_score_notebook": "Score the data quality of an existing notebook's source set.",
+    "research_ingest_codebase": "Ingest a codebase (GitHub URL or local path) and "
+        "add its structure/API digest as a NotebookLM source; creates a notebook unless "
+        "notebook_id is given.",
     "research_history": "List past experiments, or fetch one full result by id.",
     "research_suggest_prompt": "Reuse the winning prompt from a prior experiment on the "
         "same question.",
@@ -303,6 +384,7 @@ _DESCRIPTIONS: dict[str, str] = {
 _BINDINGS = {
     "research_run_experiment": "run_experiment",
     "research_score_notebook": "score_notebook",
+    "research_ingest_codebase": "ingest_codebase",
     "research_history": "history",
     "research_suggest_prompt": "suggest_prompt",
     "research_evolve_notebook": "evolve_notebook",
@@ -318,7 +400,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 13 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 14 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():

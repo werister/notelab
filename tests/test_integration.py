@@ -124,3 +124,73 @@ def test_suggest_with_no_history_is_null():
     out = json.loads(logic.suggest_prompt("never researched"))
     assert out["suggested_prompt"] is None
     assert out["based_on_prior_winners"] == 0
+
+
+# ---------------------------------------------------------------------------
+# semantic_expansions opt-in (research/semantic.py was tested but unreachable)
+# ---------------------------------------------------------------------------
+
+class _SourceAdapter(FakeAdapter):
+    def list_sources(self, notebook_id):
+        return [SourceFeatures(id="s1", url="https://arxiv.org/abs/1", title="surface codes",
+                               content="mwpm decoder " * 50,
+                               published=NOW - timedelta(days=10)),
+                SourceFeatures(id="s2", url="https://blog.example/x", title="deals",
+                               content="buy now cheap", published=NOW - timedelta(days=900))]
+
+
+def _logic_with_sources():
+    tmp = tempfile.mkdtemp()
+    return ToolLogic(adapter=_SourceAdapter(), store=Store(Path(tmp) / "sem.db"))
+
+
+def test_score_notebook_semantic_opt_in(monkeypatch):
+    from notelab.research.semantic import SemanticExpansionResult
+    seen = {}
+
+    def fake_expansions(question, sources, **kw):
+        seen["n_sources"] = len(sources)
+        return SemanticExpansionResult({"decoder": {"mwpm"}}, ["decoder"], 10, 0.78)
+
+    monkeypatch.setattr("notelab.research.semantic.semantic_term_expansions", fake_expansions)
+    out = json.loads(_logic_with_sources().score_notebook(
+        "nb1", question="decoder", semantic_expansions=True))
+    assert out["semantic_expansions_applied"] is True
+    assert out["semantic_expansion_count"] == 1
+    assert seen["n_sources"] == 2  # expansions see the same backfilled sources
+
+
+def test_score_notebook_semantic_default_off_never_calls_api(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("semantic path must not run by default")
+
+    monkeypatch.setattr("notelab.research.semantic.semantic_term_expansions", boom)
+    out = json.loads(_logic_with_sources().score_notebook("nb1", question="decoder"))
+    assert "semantic_expansions_applied" not in out
+
+
+def test_score_notebook_semantic_failure_is_json_error(monkeypatch):
+    from notelab.research.semantic import SemanticExpansionError
+
+    def fail(*a, **k):
+        raise SemanticExpansionError("needs a Mistral API key")
+
+    monkeypatch.setattr("notelab.research.semantic.semantic_term_expansions", fail)
+    out = json.loads(_logic_with_sources().score_notebook(
+        "nb1", question="decoder", semantic_expansions=True))
+    assert "Mistral API key" in out["error"]
+    assert "hint" in out
+
+
+def test_assess_notebook_semantic_opt_in(monkeypatch):
+    from notelab.research.semantic import SemanticExpansionResult
+
+    def fake_expansions(question, sources, **kw):
+        return SemanticExpansionResult({"decoder": {"mwpm", "matching"}},
+                                       ["decoder"], 10, 0.78)
+
+    monkeypatch.setattr("notelab.research.semantic.semantic_term_expansions", fake_expansions)
+    out = json.loads(_logic_with_sources().assess_notebook(
+        "nb1", question="decoder", mode="fast", semantic_expansions=True))
+    assert out["semantic_expansions_applied"] is True
+    assert out["semantic_expansion_count"] == 2

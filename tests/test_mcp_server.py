@@ -27,11 +27,12 @@ def _tmp_logic():
     return ToolLogic(adapter=StubAdapter(), store=store)
 
 
-def test_bundled_server_builds_with_all_thirteen_tools():
+def test_bundled_server_builds_with_all_fourteen_tools():
     srv = build_stdio_server(_tmp_logic())
     assert isinstance(srv, StdioMCPServer)
     assert set(srv.tools) == set(tool_names())
-    assert len(srv.tools) == 13
+    assert len(srv.tools) == 14
+    assert "research_ingest_codebase" in srv.tools
 
 
 def test_initialize_handshake():

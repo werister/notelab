@@ -106,6 +106,20 @@ class NlmxAdapter:
         r = self._run(["source", "content", source_id], timeout=120)
         return r.stdout if r.returncode == 0 else ""
 
+    def add_source(self, notebook_id: str, text: str, title: str = "") -> tuple[bool, str]:
+        """Add a text source to a notebook. Returns (ok, message).
+
+        Passes through `nlmx` untouched (it intercepts nothing under
+        `source add`). `text` goes as a single --text argv element — no shell,
+        so no quoting issues; callers should still bound its size.
+        """
+        args = ["source", "add", notebook_id, "--text", text]
+        if title:
+            args += ["--title", title]
+        r = self._run(args, timeout=300)
+        ok = r.returncode == 0
+        return ok, (r.stdout.strip() or r.stderr.strip() or ("added" if ok else "failed"))
+
     def remove_source(self, notebook_id: str, source_id: str) -> tuple[bool, str]:
         """Remove one source from a notebook. Returns (ok, message). Destructive — only
         called by the plan executor when the caller has explicitly confirmed. Passes

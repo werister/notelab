@@ -17,3 +17,6 @@ uv.lock
 # OS
 .DS_Store
 .worktrees
+
+# agent session memory (opencode/serena), never commit
+.serena/
