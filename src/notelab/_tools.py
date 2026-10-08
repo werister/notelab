@@ -130,8 +130,12 @@ class ToolLogic:
         from .research.codebase_ingest import CodebaseIngester
         try:
             digest = CodebaseIngester(max_files=max_files).ingest(repo)
-        except Exception as e:  # ValueError (bad URL) or network failure
+        except Exception as e:  # ValueError (bad URL/path) or network failure
             return json.dumps({"error": f"ingest failed for {repo!r}: {e}"}, indent=2)
+        if not digest.files:
+            return json.dumps({"error": f"ingest of {repo!r} found no ingestible "
+                                        "files — nothing added. Check the path/URL and "
+                                        "skip patterns."}, indent=2)
         text = digest.to_text()
         truncated = False
         if len(text) > 100_000:

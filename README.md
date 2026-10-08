@@ -1,6 +1,12 @@
 # NoteLab 🧪
 
-**A self-improving research MCP server on top of Google NotebookLM.**
+**Research that gets better every run.**
+
+![NoteLab in 20 seconds: the guard says no, the loop learns, 269 green, 6/6 live agent evals](brag-output/demo.gif)
+
+*20 seconds, every frame real output: a guard refusing a corrupting re-import, the
+self-improving loop picking a winner, the suite green, live agents stopped 6/6.
+[Full video with sound](brag-output/brag.mp4).*
 
 Most "NotebookLM MCP" integrations are a *remote control* — create notebook, add source,
 query. NoteLab is the layer above that: it treats **deep research as an experiment that
@@ -11,13 +17,16 @@ each other, and remembers what works — per topic, over time.
 
 It is built on a hardened base: a guarded wrapper (`nlmx`) around
 [`nlm`](https://github.com/jacob-bd/notebooklm-mcp-cli) that intercepts three confirmed
-NotebookLM corruption bugs, so the whole research loop runs on a floor that won't silently
-duplicate or lose your sources.
+NotebookLM corruption bugs — including a re-import that duplicates every source behind a
+byte-identical "✓ Imported" message — so the whole research loop runs on a floor that
+won't silently duplicate or lose your sources. And the guards aren't just unit-tested:
+live agents from two model families were pointed at them and stopped **6/6**
+([proof](#live-proof-real-agents-vs-the-guards)).
 
 - **Engine + MCP server are stdlib-only** — `pip install .` gives a runnable server with
   zero third-party dependencies (bundled JSON-RPC stdio MCP, no external SDK required).
-- **126 offline tests** (plus 1 optional live test needing a free Mistral API key), no
-  NotebookLM account needed to run them. CI on py3.10/3.12/3.13.
+- **302 offline tests, 98% coverage** (2 optional live tests skipped without keys),
+  no NotebookLM account needed to run them. CI on py3.10/3.12/3.13.
 - **See the whole loop in 5 seconds:** `python examples/self_improving_loop.py`
 
 ---
@@ -137,16 +146,45 @@ Register it with your agent (Claude Code example):
 | `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score the data quality of an existing notebook's sources (`semantic_expansions` opts into Mistral-embedding relevance; needs `MISTRAL_API_KEY`) |
 | `research_history(experiment_id?, limit?)` | Browse the experiment ledger, or fetch one full result |
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
-| `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?)` | Self-evolving sources: plan create/merge/skip/evict + budget over a notebook's sources (OpenViking-style consolidation; evictions stay behind the confirm gate) |
-| `research_assess(notebook_id, question?, mode?, use_laya?, semantic_expansions?)` | Value-assess a notebook's current sources: `fast` (cheap good/thin/bloated verdict + coverage gaps, the same check every `research_run_experiment` arm now runs automatically) or `deep` (full ablation + redundant-pairs + greedy-prune) |
+| `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?, apply?)` | Self-evolving sources: plan create/merge/skip/evict + budget over a notebook's sources (OpenViking-style consolidation; evictions stay behind the confirm gate) |
+| `research_assess(notebook_id, question?, mode?, weights?, use_laya?, semantic_expansions?)` | Value-assess a notebook's current sources: `fast` (cheap good/thin/bloated verdict + coverage gaps, the same check every `research_run_experiment` arm now runs automatically) or `deep` (full ablation + redundant-pairs + greedy-prune) |
 | `research_eval_skill(strategy_name)` | Is a strategy improving or regressing over its recorded history? OLS-slope trend + raw series |
-| `research_adversarial_run(prompt, runners?)` | Run a prompt through installed adversarial agent CLIs (opencode, copilot, claude, codex, qoder, qwen, …); missing ones skipped, not failed |
+| `research_adversarial_run(prompt, runners?, timeout?)` | Run a prompt through installed adversarial agent CLIs (opencode, copilot, claude, codex, qoder, qwen, …); missing ones skipped, not failed |
 | `catalog_sync(notebook_ids?)` | Index your notebooks + sources into the local catalog (the Obsidian-alternative index) |
 | `catalog_search(query, limit?)` | Full-text search the index — "what do we already know about X" — before researching again |
-| `research_learn_topic(topic)` | M3 strategy memory: turn a topic's experiment history into next-round prompt mutations + a tuned weight profile |
-| `research_spar(question, families?, weights?)` | M4 multi-family sparring: run the same question through several model-family CLIs over one shared corpus, score and attribute each |
-| `research_family_leaderboard(topic?)` | Rank model families by source quality — which family finds the best sources for which kind of question |
+| `research_learn_topic(question, explore?)` | M3 strategy memory: turn a topic's experiment history into next-round prompt mutations + a tuned weight profile |
+| `research_spar(question, prompt, families?)` | M4 multi-family sparring: run the same prompt through several model-family CLIs over one shared corpus, score and attribute each |
+| `research_family_leaderboard()` | Rank model families by source quality — which family finds the best sources for which kind of question |
 | `research_ingest_codebase(repo, notebook_id?, title?, max_files?)` | Ingest a codebase (GitHub URL or local path) and add its structure/API digest as a NotebookLM source; the ADD to `research_evolve_notebook`'s prune |
+
+### Live proof: real agents vs. the guards
+
+Unit tests prove the guard *logic*; the eval harness
+(`python -m notelab.research.guard_evals --notebook-id <id> --source-id <sid>`)
+proves a live agent reasoning for itself actually gets stopped — the real threat
+model. Every scenario is read-only: `nlmx` refuses before ever calling `nlm`.
+Latest sweep (2026-10-07):
+
+| runner | `--source-ids` refusal | `chat start` refusal | missing-notebook fail-fast |
+|---|---|---|---|
+| opencode | ✅ PASS | ✅ PASS | ✅ PASS |
+| claude | ✅ PASS | ✅ PASS | ✅ PASS |
+
+6/6 across two model families. The scorer only counts substantive refusal
+markers — a bare command echo doesn't pass — and runs that can't produce a
+signal (Copilot: monthly quota exhausted; Codex: usage limit; a shell-less
+Claude spec: approval-blocked) are reported as environment errors, never as
+passes or failures. Honest scoreboard, honest harness.
+
+### Agent skills
+
+- `skills/nlm-skill/` — operating NotebookLM (the remote control).
+- `skills/research-loop/` — researching *through* notelab: the 14 tools, the
+  loop, three worked flows. This is the skill for "research X and get better".
+- `skills/skill-evolution/` — the champion/challenger protocol that makes
+  skills themselves measurable: fixed batteries, margin + held-out + green-tree
+  gating, git-archived scores. Duel a prompt variant with
+  `skills/skill-evolution/scripts/evolve.py --battery <file> --challenger <v>`.
 
 ### Design & roadmap
 

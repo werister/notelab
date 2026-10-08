@@ -194,3 +194,147 @@ def test_assess_notebook_semantic_opt_in(monkeypatch):
         "nb1", question="decoder", mode="fast", semantic_expansions=True))
     assert out["semantic_expansions_applied"] is True
     assert out["semantic_expansion_count"] == 2
+
+
+def test_assess_notebook_semantic_failure_is_json_error(monkeypatch):
+    from notelab.research.semantic import SemanticExpansionError
+
+    def fail(*a, **k):
+        raise SemanticExpansionError("needs a Mistral API key")
+
+    monkeypatch.setattr("notelab.research.semantic.semantic_term_expansions", fail)
+    out = json.loads(_logic_with_sources().assess_notebook(
+        "nb1", question="decoder", semantic_expansions=True))
+    assert "Mistral API key" in out["error"]
+    assert "hint" in out
+
+
+# ---------------------------------------------------------------------------
+# tool-level coverage: weights presets, backfill, evolve, eval, catalog,
+# leaderboard, spar-timeout (all previously untested through ToolLogic)
+# ---------------------------------------------------------------------------
+
+def test_weights_from_preset_dict_and_unknown():
+    from notelab._tools import _weights_from
+    from notelab.research.quality import QualityWeights
+    assert _weights_from("news").recency == 0.35
+    assert _weights_from("no-such-preset") == QualityWeights()
+    assert _weights_from({"relevance": 0.9}).relevance == 0.9
+    assert _weights_from({"bogus": 1.0}) == QualityWeights()
+
+
+def test_lazy_default_store_constructed_once_on_access(monkeypatch, tmp_path):
+    made = []
+
+    def spy_store():
+        made.append(True)
+        return Store(tmp_path / "lazy.db")
+
+    monkeypatch.setattr("notelab._tools.Store", spy_store)
+    logic = ToolLogic()  # no store, no adapter
+    assert made == []  # constructing logic touches no DB
+    assert isinstance(logic.store, Store)
+    assert logic.store is logic.store  # cached, constructed once
+    assert len(made) == 1
+
+
+def test_score_notebook_backfills_missing_content(tmp_path):
+    class BareAdapter(FakeAdapter):
+        def __init__(self):
+            self.fetched = []
+
+        def list_sources(self, notebook_id):
+            return [SourceFeatures(id="s1", url="https://arxiv.org/x",
+                                   content="",
+                                   published=NOW - timedelta(days=5))]
+
+        def source_content(self, sid):
+            self.fetched.append(sid)
+            return "quantum content " * 20
+
+    adapter = BareAdapter()
+    logic = ToolLogic(adapter=adapter, store=Store(Path(tmp_path) / "b.db"))
+    out = json.loads(logic.score_notebook("nb1", question="quantum"))
+    assert adapter.fetched == ["s1"]
+    assert out["n_sources"] == 1
+    assert out["quality_score"] > 0
+
+
+def test_evolve_notebook_dry_run_removes_nothing(tmp_path):
+    class EvolveAdapter(FakeAdapter):
+        def __init__(self):
+            self.removed = []
+
+        def list_sources(self, notebook_id):
+            return [SourceFeatures(id="s1", url="https://arxiv.org/1",
+                                   content="quantum " * 100,
+                                   published=NOW - timedelta(days=5)),
+                    SourceFeatures(id="s2", url="https://spam.test/x",
+                                   content="",  # contentless: exercises backfill
+                                   published=NOW - timedelta(days=900))]
+
+        def source_content(self, sid):
+            return "recovered content"
+
+        def remove_source(self, notebook_id, source_id):
+            self.removed.append(source_id)
+            return True, "removed"
+
+    adapter = EvolveAdapter()
+    logic = ToolLogic(adapter=adapter, store=Store(Path(tmp_path) / "e.db"))
+    dry = json.loads(logic.evolve_notebook("nb1", question="quantum"))
+    assert dry["applied"] is False
+    assert "dry run" in dry["note"]
+    assert adapter.removed == []  # the safety property
+    assert dry["execution"]["confirmed"] is False
+
+    applied = json.loads(logic.evolve_notebook("nb1", question="quantum", apply=True))
+    assert applied["applied"] is True
+    assert applied["execution"]["confirmed"] is True
+
+
+def test_eval_skill_with_no_history_is_insufficient():
+    out = json.loads(_logic().eval_skill("never-seen"))
+    assert out["trend"] == "insufficient_data"
+    assert out["scores"] == []
+
+
+def test_catalog_sync_then_search(tmp_path):
+    class CatAdapter(FakeAdapter):
+        def list_notebooks(self):
+            return [{"id": "nb1", "title": "T"}]
+
+        def list_sources(self, notebook_id):
+            return [SourceFeatures(id="s1", title="quantum stuff",
+                                   url="https://x.test/1",
+                                   content="quantum " * 30,
+                                   published=NOW - timedelta(days=5))]
+
+    logic = ToolLogic(adapter=CatAdapter(), store=Store(Path(tmp_path) / "c.db"))
+    rep = json.loads(logic.catalog_sync())
+    assert rep["sources_synced"] == 1 and rep["errors"] == []
+    hit = json.loads(logic.catalog_search("quantum"))
+    assert hit["query"] == "quantum" and len(hit["results"]) == 1
+    miss = json.loads(logic.catalog_search("zzz-no-match-here"))
+    assert miss["results"] == []
+
+
+def test_family_leaderboard_empty():
+    out = json.loads(_logic().family_leaderboard())
+    assert out == {"leaderboard": []}
+
+
+def test_spar_family_timeout_recorded(monkeypatch):
+    from notelab.research.evals import RunnerResult, RunnerSpec
+    specs = [RunnerSpec("opencode", "opencode", ["run", "{prompt}"],
+                        available=True, path="/o")]
+    monkeypatch.setattr("notelab._tools.detect_runners_with_reliability",
+                        lambda: specs)
+
+    def fake_run_adversary(spec, prompt, timeout=180, cwd=None):
+        return RunnerResult(spec.name, True, timed_out=True)
+
+    monkeypatch.setattr("notelab._tools.run_adversary", fake_run_adversary)
+    out = json.loads(_logic().spar("q", "p", families=["opencode"]))
+    entry = next(r for r in out["results"] if r["family"] == "opencode")
+    assert entry["error"] == "timed out"

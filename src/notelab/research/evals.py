@@ -48,7 +48,17 @@ class RunnerSpec:
 # Known adversarial agent CLIs. args_template uses "{prompt}" as the substitution point.
 # These invoke the agent in a one-shot, non-interactive mode where possible.
 KNOWN_RUNNERS: list[RunnerSpec] = [
-    RunnerSpec("opencode", "opencode", ["run", "{prompt}"]),
+    # --standalone: bare `opencode run` attaches to the shared background
+    # service, where every unanswered permission prompt from a headless run
+    # piles into an in-memory approval queue (capacity 32) — our eval sweeps
+    # wedged it until even interactive use failed ("pending approval state
+    # is full"). A private server per run keeps evals hermetic with NO trust
+    # change (unanswered prompts still fail safe, unlike --auto). Caveat:
+    # sandboxed runners that block localhost listen can't start the private
+    # server ("Standalone server exited...") — those runs score no-signal
+    # via ENV_FAILURE_MARKERS, and full-battery duels there use --runners
+    # to exclude opencode until run in an open environment.
+    RunnerSpec("opencode", "opencode", ["run", "{prompt}", "--standalone"]),
     RunnerSpec("copilot", "copilot", ["-p", "{prompt}", "--allow-all-tools"]),
     RunnerSpec("claude", "claude", ["-p", "{prompt}"]),
     RunnerSpec("codex", "codex", ["exec", "{prompt}"]),

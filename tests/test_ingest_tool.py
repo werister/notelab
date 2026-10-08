@@ -9,7 +9,7 @@ from pathlib import Path
 
 from notelab._tools import ToolLogic, tool_names
 from notelab.nlmx_adapter import NlmxAdapter
-from notelab.research.codebase_ingest import CodebaseDigest, CodeFile
+from notelab.research.codebase_ingest import CodebaseDigest, CodebaseIngester, CodeFile
 from notelab.storage import Store
 
 
@@ -76,6 +76,54 @@ def test_ingest_invalid_repo_is_json_error(tmp_path):
     out = json.loads(_logic(stub, tmp_path).ingest_codebase("https://not-github.example/x"))
     assert "error" in out
     assert stub.added == []
+
+
+def test_ingest_missing_local_path_is_json_error(tmp_path):
+    stub = StubAdapter()
+    out = json.loads(_logic(stub, tmp_path).ingest_codebase(str(tmp_path / "nope")))
+    assert "does not exist" in out["error"]
+    assert stub.added == []
+    assert stub.created == []
+
+
+def test_ingest_empty_dir_adds_nothing(tmp_path):
+    (tmp_path / "empty").mkdir()
+    stub = StubAdapter()
+    out = json.loads(_logic(stub, tmp_path).ingest_codebase(
+        str(tmp_path / "empty"), notebook_id="nb1"))
+    assert "no ingestible files" in out["error"]
+    assert stub.added == []
+
+
+def test_ingest_truncates_huge_digest_visibly(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    def huge_ingest(self, repo):
+        return SimpleNamespace(
+            files=[object()], repo_name="big", default_branch="main",
+            total_lines=10, languages={"Python": 1}, test_file_ratio=0.0,
+            doc_coverage=0.0, to_text=lambda: "x" * 100_001)
+
+    monkeypatch.setattr(CodebaseIngester, "ingest", huge_ingest)
+    stub = StubAdapter()
+    out = json.loads(_logic(stub, tmp_path).ingest_codebase(
+        "https://github.com/u/big", notebook_id="nb1"))
+    assert out["truncated"] is True
+    assert out["digest_chars"] > 100_000
+    assert stub.added[0][1].endswith("*... digest truncated at 100k chars*")
+
+
+def test_ingest_nlmx_error_is_json_error(tmp_path):
+    from notelab.nlmx_adapter import NlmxError
+
+    class DeadAdapter(StubAdapter):
+        def add_source(self, notebook_id, text, title=""):
+            raise NlmxError("nlmx gone")
+
+    repo = _fixture_repo(tmp_path / "repo")
+    out = json.loads(_logic(DeadAdapter(), tmp_path).ingest_codebase(
+        str(repo), notebook_id="nb1"))
+    assert out["error"] == "nlmx gone"
 
 
 def test_ingest_add_failure_reported(tmp_path):

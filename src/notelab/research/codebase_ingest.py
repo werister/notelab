@@ -303,19 +303,6 @@ def _extract_imports_python(content: str) -> List[str]:
     return imports
 
 
-def _has_docstring(content: str, start_pos: int) -> bool:
-    """Check if a function/class at start_pos has a docstring."""
-    # Look for a string literal on the next non-empty line
-    rest = content[start_pos:]
-    lines = rest.splitlines()
-    for line in lines[1:]:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        return stripped.startswith('"""') or stripped.startswith("'''")
-    return False
-
-
 def _comment_ratio(content: str) -> float:
     """Estimate the ratio of comment lines to total lines."""
     lines = content.splitlines()
@@ -353,7 +340,12 @@ class CodebaseIngester:
         if repo_url.startswith("http"):
             files, branch = self._fetch_remote(repo_url)
         else:
-            files = self._walk_local(Path(repo_url))
+            local = Path(repo_url)
+            if not local.exists():
+                raise ValueError(f"Local path does not exist: {repo_url}")
+            if not local.is_dir():
+                raise ValueError(f"Local path is not a directory: {repo_url}")
+            files = self._walk_local(local)
             branch = "local"
 
         # Build digest

@@ -15,11 +15,11 @@ keywords = ["mcp", "notebooklm", "research", "agents", "nlm", "deep-research", "
 dependencies = []
 
 [project.optional-dependencies]
-# Optional accelerator: the official MCP SDK. Pinned <2 because 2.x renamed FastMCP
-# to MCPServer and changed APIs. NOT required — the repo ships its own stdlib-only
-# stdio MCP server (see notelab.mcp_stdio), so `pip install .` runs with no
-# third-party deps at all.
-mcp = ["mcp<2"]
+# Optional accelerator: the official MCP SDK. Unpinned: server.py binds all tools
+# on both v1 (FastMCP) and v2 (MCPServer) — verified live against both real
+# packages. NOT required — the repo ships its own stdlib-only stdio MCP server
+# (see notelab.mcp_stdio), so `pip install .` runs with no third-party deps at all.
+mcp = ["mcp"]
 dev = ["pytest>=7.0"]
 # Optional: the Laya ablation tie-breaker (research/laya_judge.py, FIELD-NOTES.md
 # gap #8). NOT required — use_laya defaults to False, the stdlib-only default path

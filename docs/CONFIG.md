@@ -3,7 +3,8 @@
 The source-quality score is a weighted sum of five signals. **The weights are config,
 not code** — you tune what "good sources" means for the kind of research you're doing,
 without forking. Pass a preset name or a dict of overrides as `weights` to
-`research_run_experiment`, `research_score_notebook`, or `research_evolve_notebook`.
+`research_run_experiment`, `research_score_notebook`, or `research_assess`.
+(`research_evolve_notebook` takes no `weights` — it scores with the default profile.)
 
 ## The five signals
 

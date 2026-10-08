@@ -27,6 +27,26 @@ def _tmp_logic():
     return ToolLogic(adapter=StubAdapter(), store=store)
 
 
+def test_missing_nlmx_is_clear_iserror_not_a_crash(monkeypatch):
+    """README promise: tools degrade with a clear, actionable error when nlmx
+    isn't installed — pinned at the JSON-RPC layer, hermetic (no PATH/HOME)."""
+    from notelab.nlmx_adapter import NlmxError
+
+    def no_nlmx():
+        raise NlmxError("nlmx not found. Install it (`cp nlmx ~/.local/bin/nlmx "
+                        "&& chmod +x`) or set NLMX_BIN.")
+
+    monkeypatch.setattr("notelab.nlmx_adapter._resolve_nlmx", no_nlmx)
+    tmp = tempfile.mkdtemp()
+    srv = build_stdio_server(ToolLogic(store=Store(Path(tmp) / "e2e.db")))
+    resp = srv.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                       "params": {"name": "research_score_notebook",
+                                 "arguments": {"notebook_id": "nb1"}}})
+    assert resp["result"]["isError"] is True
+    text = resp["result"]["content"][0]["text"]
+    assert "nlmx not found" in text and "NLMX_BIN" in text
+
+
 def test_bundled_server_builds_with_all_fourteen_tools():
     srv = build_stdio_server(_tmp_logic())
     assert isinstance(srv, StdioMCPServer)

@@ -253,3 +253,104 @@ def test_known_runners_names_are_git_branch_safe():
                                 capture_output=True, text=True)
         assert result.returncode == 0, \
             f"{r.name!r} is not git-branch-safe: {result.stderr.strip()}"
+
+
+def test_ols_slope_needs_two_points():
+    from notelab.research.evals import _ols_slope
+    assert _ols_slope([]) == 0.0
+    assert _ols_slope([0.5]) == 0.0
+    assert _ols_slope([0.0, 1.0]) == 1.0
+
+
+def test_detect_runners_with_reliability_uses_default_ledger(monkeypatch):
+    import notelab.research.evals as E
+    from notelab.research import reliability as R
+    seen = {}
+
+    def fake_filter(specs, ledger):
+        seen["ledger"] = ledger
+        return specs
+
+    monkeypatch.setattr(R, "filter_known_unreliable", fake_filter)
+    out = E.detect_runners_with_reliability()
+    assert seen["ledger"] == R.DEFAULT_MML_LEDGER
+    assert {"opencode", "claude"} <= {r.name for r in out}
+
+
+def test_cwd_placeholder_substituted_into_argv(tmp_path):
+    from notelab.research.evals import RunnerSpec
+    spec = RunnerSpec("show-cwd", "sh", ["-c", "echo Template saw: {cwd} {prompt}"],
+                      available=True, path="/bin/sh")
+    res = run_adversary(spec, "hello", cwd=str(tmp_path))
+    assert res.returncode == 0
+    assert f"Template saw: {tmp_path} hello" in res.stdout
+
+
+def test_timeout_kill_races_resolve_to_timed_out(monkeypatch):
+    """The timeout path's two race branches (process group already gone;
+    escaped grandchild holding the pipe past the bounded reap) must both
+    resolve to timed_out, never hang or raise. Faked Popen: triggering these
+    races with real processes would be timing-flaky by construction."""
+    import subprocess as sp_mod
+
+    import notelab.research.evals as E
+    from notelab.research.evals import RunnerSpec
+
+    class RacingProc:
+        pid = 424242
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise sp_mod.TimeoutExpired(cmd="x", timeout=timeout)
+
+    monkeypatch.setattr(E.subprocess, "Popen", lambda *a, **k: RacingProc())
+    monkeypatch.setattr(E.os, "getpgid", lambda pid: 1)
+
+    def gone(pgid, sig):
+        raise ProcessLookupError()
+
+    monkeypatch.setattr(E.os, "killpg", gone)
+    spec = RunnerSpec("x", "x", ["{prompt}"], available=True, path="/x")
+    res = run_adversary(spec, "hi", timeout=1)
+    assert res.timed_out is True
+    assert res.returncode is None
+
+
+def test_plan_item_merge_serializes_target():
+    from notelab.research.evolve import PlanItem
+    d = PlanItem(Action.MERGE, "a", 0.9, "dupe", merges_with="b").as_dict()
+    assert d["merges_with"] == "b"
+    assert "merges_with" not in PlanItem(Action.KEEP, "a", 0.9, "fine").as_dict()
+
+
+def test_similarity_falls_back_to_domain_without_text():
+    from notelab.research.evolve import _similarity
+    a = SourceFeatures(id="a", url="https://x.test/1", title="", content="")
+    b = SourceFeatures(id="b", url="https://x.test/2", title="", content="")
+    c = SourceFeatures(id="c", url="https://other.test/1", title="", content="")
+    assert _similarity(a, b) == 1.0
+    assert _similarity(a, c) == 0.0
+
+
+def test_over_budget_skips_created_but_keeps_sole_cover():
+    # keep_budget=1 over {strong, sole-cover, novel candidate}: the candidate
+    # SKIPs (never create-then-evict) while the sole cover of "decoder" KEEPs
+    # despite being over budget.
+    strong = SourceFeatures(id="strong", url="https://arxiv.org/1",
+                            title="quantum deep dive", content="quantum " * 200,
+                            published=NOW - timedelta(days=5))
+    sole = SourceFeatures(id="sole", url="https://blog.test/d",
+                          title="decoder notes", content="decoder blueprint",
+                          published=NOW - timedelta(days=5))
+    new = SourceFeatures(id="new", url="https://x.test/n",
+                         title="quantum research", content="quantum research",
+                         published=NOW - timedelta(days=500))
+    pol = EvolutionPolicy(keep_budget=1, quality_floor=0.0)
+    plan, _ = plan_evolution("nb1", existing=[strong, sole], candidates=[new],
+                             question="quantum decoder", policy=pol)
+    by_id = {i.source_id: i for i in plan.items}
+    assert by_id["strong"].action == Action.KEEP
+    assert by_id["new"].action == Action.SKIP
+    assert "over keep_budget" in by_id["new"].reason
+    assert by_id["sole"].action == Action.KEEP
+    assert "coverage guard keeps it" in by_id["sole"].reason

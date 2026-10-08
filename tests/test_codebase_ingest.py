@@ -202,3 +202,100 @@ def test_remote_fetch_failure_skips_file(monkeypatch):
 
     assert digest.files == []
     assert digest.default_branch == "main"
+
+
+def test_local_missing_path_raises(tmp_path):
+    with pytest.raises(ValueError, match="does not exist"):
+        CodebaseIngester().ingest(str(tmp_path / "nope"))
+
+
+def test_local_file_not_dir_raises(tmp_path):
+    f = tmp_path / "one.py"
+    f.write_text("x = 1\n")
+    with pytest.raises(ValueError, match="not a directory"):
+        CodebaseIngester().ingest(str(f))
+
+
+def test_digest_renders_key_file_classes_and_imports(tmp_path):
+    (tmp_path / "main.py").write_text(
+        '"""M."""\nimport os\nimport sys\n\n\nclass Engine:\n    """E."""\n\n'
+        '    def run(self):\n        """R."""\n        return 1\n'
+    )
+    text = CodebaseIngester().ingest(str(tmp_path)).to_text()
+    assert "**Classes:**" in text
+    assert "`Engine`(run)" in text
+    assert "**Imports:** os, sys" in text
+
+
+def test_digest_notes_extra_key_files(tmp_path):
+    for i in range(11):
+        (tmp_path / f"test_{i}.py").write_text("def t():\n    pass\n")
+    text = CodebaseIngester().ingest(str(tmp_path)).to_text()
+    assert "+ 1 more key files not shown" in text
+
+
+def test_should_skip_extension_gate():
+    from notelab.research.codebase_ingest import _should_skip
+    assert _should_skip("data/file.xyz") is True
+    assert _should_skip("data/file.TXT") is False
+    assert _should_skip("noextension") is False
+
+
+def test_comment_ratio_edges():
+    from notelab.research.codebase_ingest import _comment_ratio
+    assert _comment_ratio("") == 0.0
+    assert _comment_ratio("# a\ncode\n// b\nmore\n") == 0.5
+
+
+def test_git_suffix_stripped_from_repo_name(tmp_path):
+    repo = tmp_path / "myrepo.git"
+    repo.mkdir()
+    (repo / "a.py").write_text("x = 1\n")
+    digest = CodebaseIngester().ingest(str(repo))
+    assert digest.repo_name == "myrepo"
+
+
+def test_local_long_file_truncated_to_cap(tmp_path):
+    (tmp_path / "big.py").write_text("\n".join(f"x{i} = {i}" for i in range(50)))
+    digest = CodebaseIngester(max_file_lines=5).ingest(str(tmp_path))
+    assert digest.files[0].lines == 5
+
+
+def test_local_unreadable_file_skipped(tmp_path):
+    good = tmp_path / "good.py"
+    good.write_text("x = 1\n")
+    bad = tmp_path / "bad.py"
+    bad.write_text("y = 2\n")
+    bad.chmod(0o000)
+    try:
+        digest = CodebaseIngester().ingest(str(tmp_path))
+    finally:
+        bad.chmod(0o644)
+    assert [f.path for f in digest.files] == ["good.py"]
+
+
+def test_remote_long_file_truncated_to_cap(monkeypatch):
+    tree = {"tree": [{"type": "blob", "path": "big.py"}]}
+    body = ("\n".join(f"x{i} = {i}" for i in range(50))).encode()
+
+    def fake_urlopen(req, timeout=None):
+        url = req.full_url
+        if url.endswith("/repos/o/r"):
+            return _FakeResponse(json.dumps({}).encode())
+        if "/git/trees/" in url:
+            return _FakeResponse(json.dumps(tree).encode())
+        return _FakeResponse(body)
+
+    monkeypatch.setattr(
+        "notelab.research.codebase_ingest.urllib.request.urlopen", fake_urlopen
+    )
+    digest = CodebaseIngester(max_file_lines=5).ingest("https://github.com/o/r")
+    assert digest.files[0].lines == 5
+
+
+def test_check_docstrings_js_and_go():
+    ing = CodebaseIngester()
+    assert ing._check_docstrings("/** doc */\nconst x = 1;", "JavaScript") is True
+    assert ing._check_docstrings("const x = 1;", "JavaScript") is False
+    assert ing._check_docstrings("// c\nfunc main() {}", "Go") is True
+    assert ing._check_docstrings("func main() {}", "Go") is False

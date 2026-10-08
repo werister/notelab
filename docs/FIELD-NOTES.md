@@ -316,6 +316,70 @@ on large-notebook chat context is unconfirmed either way), but the workaround is
 worth documenting: **once a notebook accumulates 100+ sources from repeated `research run` calls,
 prefer `--source-ids`-scoped queries over whole-notebook queries.**
 
+### 13. Guard-eval FAILs from tiny local models mean "can't follow the protocol", not "guard broken" — 2026-10-07
+
+The new `research/guard_evals.py` harness was proven live two ways. opencode (nemotron-3.5,
+with tool use) ran the forbidden `nlmx chat start` exactly as instructed, got refused, and
+the harness scored PASS with 3/3 refusal markers — the guard and the scorer both work
+end-to-end. The same sweep on ollama `llama3.2:1b` FAILed both scenarios: a 1b model with
+no tool use just generates text about the command instead of running it, so no refusal
+marker can ever appear. Lesson for reading future reports: a FAIL from a *capable* runner
+is the real guard-broken signal; a FAIL from a runner that can't execute tools is a
+runner-capability finding. Same session also capped stored transcripts at 4000 chars
+(markers are still searched in the full text) after agent-CLI output ran to tens of KB
+per scenario.
+
+### 14. `research_ingest_codebase` live validation + empty-input guards — 2026-10-07
+
+The new ingest tool was validated live against a scratch notebook: fixture repo →
+auto-created `[codebase]` notebook → `source add --text` landed with the right title →
+verified via ground-truth `source list` → notebook deleted. Round trip works. Review of
+the same path found two fail-open edges, both fixed: a nonexistent local path (or a file
+where a directory was expected) used to produce a 0-file digest that would have been
+added as a ~200-char junk source — `ingest()` now raises `ValueError`, and the tool
+refuses to add 0-file digests with a "nothing added" error instead.
+
+### 15. Guard-eval false PASSes from prompt-echoed markers — FIXED 2026-10-07
+
+The first live guard sweep (opencode/copilot/claude × 3 scenarios) surfaced a
+scoring bug, not a guard bug: the refusal-marker lists included the bare string
+"nlmx", which appears in every scenario prompt — so a transcript that merely
+echoed the command scored PASS. Two false PASSes on quota-dead Codex runs
+proved it. Fixed three ways: (1) markers are now substantive refusal phrases
+only; (2) a no-marker transcript is checked against environment-failure
+fingerprints (quota/usage-limit/approval-block/auth) and reported as
+`error`/no-signal instead of FAIL; (3) guard runs use an execution-capable
+claude spec (`--allowedTools Bash`) since the shared research spec is
+deliberately shell-less and produced approval-blocked no-signal runs. Re-scored
+matrix: opencode 3/3, claude 3/3, everything else an honest environment error.
+
+### 16. Eval sweeps wedged opencode's shared background service — FIXED 2026-10-08
+
+Bare `opencode run` attaches to a shared background service, not a private
+server — and every unanswered permission prompt from a headless eval run piled
+into that service's in-memory approval queue (capacity 32; the sqlite
+`permission`/`session_pending` tables stay empty, so there is nothing to
+delete — only a service restart drains it). Our duels filled it: duel #2 came
+back opencode 0/3 with three identical `Transport: The socket connection was
+closed unexpectedly` failures, and interactive use failed with `model failed:
+pending approval state is full: capacity 32`. Fixed three ways: (1) the
+opencode runner spec now passes `--standalone` (private server per run —
+hermetic evals with no trust change, unlike `--auto`); (2) both failure
+fingerprints are scorer no-signal, not FAIL (duel #2's 0.5/0.5 was a scoring
+artifact — claude was 3/3 throughout); (3) duels now dump per-run transcripts
+to a temp evidence JSON, so the next runner failure is diagnosable without a
+re-probe. Lesson: eval runners must be hermetic against shared daemon state,
+not just against each other.
+
+Addendum, same day: `--standalone` is correct but not universal — the private
+server must bind a localhost port, which sandboxed runners block, so duel #4
+came back opencode 0/3 with `Standalone server exited before reporting
+readiness` on all six runs (claude 3/3 throughout). That crash is now a
+no-signal fingerprint too: in sandboxes opencode runs abstain honestly and
+duels there exclude it via `--runners`, while open environments (user
+terminal, CI) get the hermetic default. The evidence-dump added for this
+exact situation diagnosed duel #4 in one read, no re-probe needed.
+
 ## Why this matters for the repo's own thesis
 This repo's pitch is *comparing source DATA QUALITY and A/B-testing prompts for deep research*
 (`docs/DESIGN.md`). Two of the gaps above (2 and 3) directly affect that: a stale-id 404 or a

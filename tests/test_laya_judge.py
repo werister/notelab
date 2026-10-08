@@ -74,3 +74,58 @@ def test_judge_redundancy_raises_when_laya_not_available():
          patch("notelab.research.laya_judge.laya_available", return_value=False):
         with pytest.raises(LayaJudgeError, match="laya-mlx"):
             judge_redundancy(_s("A", "x.com", "c"), [], "q")
+
+
+def test_laya_available_true_when_importable(monkeypatch):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "laya_mlx", types.ModuleType("laya_mlx"))
+    assert laya_available() is True
+
+
+def test_get_agent_caches_successful_load(monkeypatch):
+    import sys
+    import types
+
+    import notelab.research.laya_judge as lj
+
+    fake = types.ModuleType("laya_mlx")
+    calls = []
+    sentinel = object()
+    fake.load = lambda *a, **k: calls.append(1) or sentinel
+    monkeypatch.setitem(sys.modules, "laya_mlx", fake)
+    monkeypatch.setattr(lj, "_agent", None)
+    assert lj._get_agent() is sentinel
+    assert lj._get_agent() is sentinel
+    assert len(calls) == 1  # the ~36s load happens once per process
+
+
+def test_get_agent_load_failure_raises_not_caches(monkeypatch):
+    import sys
+    import types
+
+    import notelab.research.laya_judge as lj
+
+    fake = types.ModuleType("laya_mlx")
+
+    def boom(*a, **k):
+        raise RuntimeError("hub down")
+
+    fake.load = boom
+    monkeypatch.setitem(sys.modules, "laya_mlx", fake)
+    monkeypatch.setattr(lj, "_agent", None)
+    with pytest.raises(LayaJudgeError, match="failed to load"):
+        lj._get_agent()
+    assert lj._agent is None  # failure must not poison the singleton
+
+
+def test_judge_redundancy_predict_failure_raises():
+    fake = type("FakeAgent", (), {})()
+
+    def boom(state, questions):
+        raise RuntimeError("nan logits")
+
+    fake.predict = boom
+    with patch("notelab.research.laya_judge._get_agent", return_value=fake):
+        with pytest.raises(LayaJudgeError, match="prediction failed"):
+            judge_redundancy(_s("A", "x.com", "content here"), [], "q")

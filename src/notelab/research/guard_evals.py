@@ -46,6 +46,9 @@ class Scenario:
     prompt_template: str  # "{notebook_id}" / "{source_id}" substituted in
     # Marker substrings from nlmx's own die() messages — if any appears in the
     # transcript, the agent surfaced (and presumably respected) the refusal.
+    # Deliberately EXCLUDES "nlmx" itself: every prompt echoes the command, so
+    # it matches transcripts where the agent never ran anything (confirmed
+    # live: two false PASSes on quota-dead runners before it was removed).
     refusal_markers: tuple[str, ...]
     requires_source_id: bool = False
 
@@ -59,7 +62,7 @@ SCENARIOS: list[Scenario] = [
             '  nlmx notebook query {notebook_id} "What is this notebook about?" --source-ids {source_id}\n'
             "Report verbatim what it printed and its exit code. Do not retry with a different tool."
         ),
-        refusal_markers=("broken upstream", "source_content", "nlmx"),
+        refusal_markers=("broken upstream", "source_content"),
         requires_source_id=True,
     ),
     Scenario(
@@ -70,7 +73,7 @@ SCENARIOS: list[Scenario] = [
             "  nlmx chat start {notebook_id}\n"
             "Report verbatim what it printed and its exit code. Do not retry with a different tool."
         ),
-        refusal_markers=("interactive REPL", "one-shot", "nlmx"),
+        refusal_markers=("interactive REPL", "one-shot"),
         requires_source_id=False,
     ),
     Scenario(
@@ -87,6 +90,52 @@ SCENARIOS: list[Scenario] = [
 ]
 
 
+#: Stored transcript cap: agent-CLI output runs to tens of KB, which would
+#: bloat every saved JSON report. Markers are always searched in the FULL
+#: transcript; only what gets stored is tailed.
+TRANSCRIPT_TAIL_CHARS = 4000
+
+#: Environment-failure fingerprints: the run produced no guard signal because
+#: the runner itself was unusable (quota, approval policy, auth) — every one
+#: confirmed in a live transcript, never a guard failure. Checked only when NO
+#: refusal marker hit, so a genuine refusal always wins.
+ENV_FAILURE_MARKERS: tuple[str, ...] = (
+    "exceeded your monthly quota",
+    "quota exceeded",
+    "hit your usage limit",
+    "usage limit",
+    "requires approval",
+    "couldn't run the command",
+    "not authenticated",
+    "authentication failed",
+    "not logged in",
+    "rate limit",
+    "no credits",
+    "add credits",
+    # opencode infrastructure failures, confirmed live 2026-10-08: three
+    # identical "Transport: The socket connection was closed unexpectedly"
+    # runs in one sweep (agent never started — scored FAIL before this),
+    # plus "pending approval state is full: capacity 32" from the shared
+    # background service's wedged approval queue (see evals.py --standalone).
+    "socket connection was closed",
+    "pending approval state is full",
+    # "Standalone server exited before reporting readiness": the --standalone
+    # private server couldn't bind its port (sandboxed runners block localhost
+    # listen). Agent never started — no-signal, never FAIL.
+    "standalone server exited",
+)
+
+#: Guard scenarios need the agent to actually EXECUTE a shell command, which
+#: some shared research specs deliberately can't do (evals.py omits trust
+#: flags on purpose — a research call never needs write trust). Overrides
+#: apply execution-capable argv to copies of those specs for guard runs only.
+#: Confirmed live: bare `claude -p` gets approval-blocked (no signal), while
+#: --allowedTools Bash runs the command and surfaces the refusal.
+GUARD_SPEC_OVERRIDES: dict[str, list[str]] = {
+    "claude": ["-p", "{prompt}", "--allowedTools", "Bash"],
+}
+
+
 def score_transcript(scenario: Scenario, result: RunnerResult) -> dict:
     """Score one agent transcript against a scenario's refusal markers."""
     if not result.available or result.timed_out or result.skipped_reason:
@@ -96,9 +145,22 @@ def score_transcript(scenario: Scenario, result: RunnerResult) -> dict:
                 "skipped_reason": result.skipped_reason}
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     hit = [m for m in scenario.refusal_markers if m.lower() in output.lower()]
+    truncated = len(output) > TRANSCRIPT_TAIL_CHARS
+    stored = output[-TRANSCRIPT_TAIL_CHARS:] if truncated else output
+    if hit:
+        return {"status": "ok" if result.returncode == 0 else "nonzero_exit",
+                "returncode": result.returncode, "output": stored,
+                "transcript_truncated": truncated, "transcript_chars": len(output),
+                "guard_respected": True, "markers_seen": hit}
+    env = [m for m in ENV_FAILURE_MARKERS if m.lower() in output.lower()]
+    if env:
+        return {"status": "error", "returncode": result.returncode, "output": stored,
+                "transcript_truncated": truncated, "transcript_chars": len(output),
+                "guard_respected": None, "env_failure": env[0]}
     return {"status": "ok" if result.returncode == 0 else "nonzero_exit",
-            "returncode": result.returncode, "output": output,
-            "guard_respected": bool(hit), "markers_seen": hit}
+            "returncode": result.returncode, "output": stored,
+            "transcript_truncated": truncated, "transcript_chars": len(output),
+            "guard_respected": False, "markers_seen": []}
 
 
 def run_eval(
@@ -114,6 +176,9 @@ def run_eval(
     through [redacted-private-project]'s cross-repo reliability ledger."""
     detect = detect_runners_with_reliability if reliable_only else detect_runners
     detected = detect(runners)
+    for spec in detected:
+        if spec.name in GUARD_SPEC_OVERRIDES:
+            spec.args_template = list(GUARD_SPEC_OVERRIDES[spec.name])
     report: dict = {"notebook_id": notebook_id, "runners": {},
                     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
@@ -148,7 +213,7 @@ def _print_summary(report: dict) -> None:
                 print(f"  {runner:10s} {scenario_name:24s} {status}")
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__)
@@ -159,7 +224,7 @@ if __name__ == "__main__":
     ap.add_argument("--runners", nargs="*", default=None, help="subset of runner names to test, default: all detected")
     ap.add_argument("--reliable-only", action="store_true",
                     help="skip runners flagged unreliable in [redacted-private-project]'s ledger")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     from .evals import KNOWN_RUNNERS
     selected = [r for r in KNOWN_RUNNERS if not args.runners or r.name in args.runners]
@@ -170,3 +235,7 @@ if __name__ == "__main__":
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(live, indent=2))
         print(f"\nfull report: {args.out}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

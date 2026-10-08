@@ -1,6 +1,6 @@
 ---
 name: nlm-skill
-description: "Expert guide for the NotebookLM CLI (`nlm`) and MCP server - interfaces for Google NotebookLM. Use this skill when users want to interact with NotebookLM programmatically, including: creating/managing notebooks, adding sources (URLs, YouTube, text, Google Drive), generating content (podcasts, reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conducting research, chatting with sources, or automating NotebookLM workflows. Triggers on mentions of \"nlm\", \"notebooklm\", \"notebook lm\", \"podcast generation\", \"audio overview\", \"refactor document\", \"critique draft\", or any NotebookLM-related automation task."
+description: "Expert guide for the NotebookLM CLI (`nlm`) and MCP server - interfaces for Google NotebookLM. Use this skill when users want to interact with NotebookLM programmatically, including: creating/managing notebooks, adding sources (URLs, YouTube, text, Google Drive), generating content (podcasts, reports, quizzes, flashcards, mind maps, slides, infographics, videos, data tables), conducting research, chatting with sources, or automating NotebookLM workflows. Triggers on mentions of \"nlm\", \"notebooklm\", \"notebook lm\", \"podcast generation\", \"audio overview\", \"refactor document\", \"critique draft\", or any NotebookLM-related automation task. For SELF-IMPROVING research (A/B-test prompts, score/curate notebooks, spar model families, verify guards) hand off to the research-loop skill instead."
 version: "0.9.4"
 ---
 
@@ -97,6 +97,15 @@ or block forever with no error signal from `nlm` itself:
 For anything else, `nlmx <anything>` is identical to `nlm <anything>` — it's
 a passthrough, not a fork. Prefer it as your default entry point so you get
 these guards for free without having to remember them.
+
+## Research above the remote control
+
+This skill teaches *operating* NotebookLM. If the task is *researching a
+question and getting better at it* — A/B-testing prompts, scoring sources,
+curating notebooks, sparring model families, verifying guards with live
+agents — hand off to the **`research-loop`** skill (notelab's 14 research
+tools + the self-improvement loop). Rule of thumb: driving NotebookLM =
+this skill; improving research = `research-loop`.
 
 **Current MCP surface:** 43 tools. Consolidated action tools include `note`,
 `label`, `studio_status`, `batch`, `pipeline`, and `tag`. Consolidated type
