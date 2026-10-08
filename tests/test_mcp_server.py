@@ -47,12 +47,13 @@ def test_missing_nlmx_is_clear_iserror_not_a_crash(monkeypatch):
     assert "nlmx not found" in text and "NLMX_BIN" in text
 
 
-def test_bundled_server_builds_with_all_fourteen_tools():
+def test_bundled_server_builds_with_all_tools():
     srv = build_stdio_server(_tmp_logic())
     assert isinstance(srv, StdioMCPServer)
     assert set(srv.tools) == set(tool_names())
-    assert len(srv.tools) == 19
+    assert len(srv.tools) == 20
     assert "research_ingest_codebase" in srv.tools
+    assert "research_export" in srv.tools
 
 
 def test_initialize_handshake():

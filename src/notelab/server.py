@@ -7,7 +7,7 @@ runnable server that fully loads on its own without linking any external MCP rep
 
 If the official `mcp` SDK is installed you may opt into it with `--sdk`; that path
 tolerates both the 1.x API (`FastMCP`) and the 2.x API (`MCPServer`). Either way the
-same 19 tools from `_tools.py` are exposed.
+same 20 tools from `_tools.py` are exposed.
 """
 from __future__ import annotations
 

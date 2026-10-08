@@ -219,6 +219,33 @@ Empty `kind_weights` (the default) treats every kind equally. Full detail:
 [docs/CONFIG.md](docs/CONFIG.md) and the design note
 [docs/DESIGN-PRINCIPLE-user-owns-value.md](docs/DESIGN-PRINCIPLE-user-owns-value.md).
 
+## From a score to an action: `research_export`
+
+A number isn't a decision. `research_export(notebook_id, question)` turns the scored
+library into an **actionable report** — a verdict, the source-kind mix, the specific
+problems, and numbered **next actions** you (or your agent) can execute:
+
+```markdown
+# Research report: how to build a rag application with vector databases
+**Overall source quality:** 0.4468  ·  verdict: thin
+**Sources:** 4  ·  kind-diversity 0.25  ·  domain-diversity 1.0
+**Question coverage:** 0.2
+
+## What stands out
+- 1 source(s) look like blocked bot-wall / sign-in shells (kinds: video) — they hold no real content.
+- Question terms not covered by any source: application, build, databases, vector.
+- Overall source-quality score is low (0.4468).
+
+## Next actions
+1. Run `research_fix_videos(notebook_id, apply=true)` to re-add blocked videos natively…
+2. Research again targeting the uncovered terms (application, build, databases, vector)…
+3. Assessment says 'thin' — gather more / higher-quality sources before relying on this notebook.
+```
+
+Pass `fmt="json"` for the machine-readable model, `fmt="csv"` for a per-source
+spreadsheet, or `deep=true` to fold in the ablation/redundancy analysis. It's
+read-only and safe to hand to a human or paste into a PR.
+
 ## How it works
 
 ### 1. The guard: where `nlmx` sits
@@ -392,7 +419,7 @@ Claims here are backed by checks you can rerun. Full detail and commands: [docs/
 | Source scoring is auditable | Every composite decomposes into its five signals; weights are config | See any `research_score_notebook` output |
 | Code index is exact and versioned | Tests for verbatim source, AST callers and subclasses, text search, kept versions, diffs, non-Python symbols | In the offline suite |
 | Video repair works on real notebooks | Live: blocked YouTube copies detected, native copies added, a lecture answered from its transcript | Checked on a real notebook (see above) |
-| The whole package | 361 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
+| The whole package | 367 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
 
 **Design choices that limit blast radius**
 
@@ -405,7 +432,7 @@ Claims here are backed by checks you can rerun. Full detail and commands: [docs/
 straight through to `nlm`. Source-quality scores say nothing about whether an answer is correct. It does not
 handle your Google credentials: `nlm` does. Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
-## MCP tools (19)
+## MCP tools (20)
 
 <details><summary>Full tool table</summary>
 
@@ -413,6 +440,7 @@ handle your Google credentials: `nlm` does. Report vulnerabilities privately: [S
 |---|---|
 | `research_run_experiment(question, strategies, weights?)` | A/B several prompt strategies; score each run's sources; rank; record to ledger |
 | `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score the data quality of an existing notebook's sources; returns per-signal scores plus a `type_mix` and `type_diversity` (how many papers/docs/repos/videos/discussions). `weights` takes a preset name (`project_kickstart`, `academic`, `forum_first`, `lit_review`, `news`, `docs`, `balanced`) or a dict (incl. `kind_weights`); `semantic_expansions` needs `MISTRAL_API_KEY` |
+| `research_export(notebook_id, question?, weights?, fmt?, deep?)` | Generate an **actionable report**: verdict, source-kind mix, problems found (blocked videos, coverage gaps, redundancy) and concrete **next actions**. `fmt`: `markdown` (default, human report), `json`, or `csv` (per-source rows). The "what do I do now" output |
 | `research_history(experiment_id?, limit?)` | Browse the experiment ledger, or fetch one full result |
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
 | `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?, apply?)` | Plan create / merge / skip / evict over a notebook's sources; evictions stay behind the confirm gate |

@@ -43,10 +43,12 @@ def test_short_help_flag_also_works(capsys):
 
 
 def test_build_server_returns_bundled_stdio():
+    from notelab._tools import tool_names
     from notelab.mcp_stdio import StdioMCPServer
     srv = server.build_server()
     assert isinstance(srv, StdioMCPServer)
-    assert len(srv.tools) == 19
+    assert len(srv.tools) == len(tool_names())
+    assert "research_export" in srv.tools
 
 
 class _FakeSdkApp:

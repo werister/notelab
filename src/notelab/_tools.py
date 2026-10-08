@@ -1,7 +1,7 @@
 """
 Backend-agnostic tool registration.
 
-One definition of the 19 tools, bound onto the bundled stdlib stdio server
+One definition of the 20 tools, bound onto the bundled stdlib stdio server
 (`mcp_stdio.StdioMCPServer`). `server.py` can additionally bind the same callables
 onto the optional official SDK, but the bundled path here needs nothing but stdlib —
 that is what lets the package "fully load" without linking any external MCP repo.
@@ -119,6 +119,39 @@ class ToolLogic:
             report["semantic_expansions_applied"] = True
             report["semantic_expansion_count"] = sum(len(v) for v in w.term_expansions.values())
         return json.dumps(report, indent=2)
+
+    def export_report(self, notebook_id: str, question: str = "",
+                      weights: dict | None = None, fmt: str = "markdown",
+                      deep: bool = False) -> str:
+        """Score a notebook's sources and render an ACTIONABLE report: a verdict, the
+        source-kind mix, the specific problems found (blocked videos, coverage gaps,
+        redundant sources) and concrete NEXT ACTIONS. fmt: 'markdown' (default, the
+        human report), 'json' (the same model, machine-readable), or 'csv' (one row
+        per source). deep=True adds the ablation/redundancy assessment to the findings.
+
+        Unlike research_score_notebook (raw numbers), this is the "what do I do now"
+        output — safe to hand to a human or paste into a PR. Read-only."""
+        from .research.ablation import quick_assess
+        from .research.report import build_report_model, render
+        try:
+            w = _weights_from(weights)
+            sources = self.adapter.list_sources(notebook_id)
+            cap = None if deep else 15
+            for s in sources[:cap] if cap else sources:
+                if not s.content:
+                    s.content = self.adapter.source_content(s.id)
+            report = score_sources(sources, question, w).as_dict()
+            assess = quick_assess(sources, question, weights=w,
+                                  mode="deep" if deep else "fast") if question else None
+            model = build_report_model(report, notebook_id=notebook_id,
+                                       question=question, assess=assess)
+            text = render(model, fmt=fmt)
+        except NlmxError as e:
+            return json.dumps({"error": str(e)}, indent=2)
+        except ValueError as e:  # unknown fmt
+            return json.dumps({"error": str(e)}, indent=2)
+        # markdown/csv return the raw text; json is already a JSON string
+        return text
 
     def ingest_codebase(self, repo: str, notebook_id: str | None = None,
                         title: str | None = None, max_files: int = 200,
@@ -459,6 +492,11 @@ _SCHEMAS: dict[str, dict] = {
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
                        "weights": _WEIGHTS_SCHEMA,
                        "semantic_expansions": {"type": "boolean"}}},
+    "research_export": {"type": "object", "required": ["notebook_id"],
+        "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
+                       "weights": _WEIGHTS_SCHEMA,
+                       "fmt": {"type": "string", "enum": ["markdown", "json", "csv"]},
+                       "deep": {"type": "boolean"}}},
     "research_ingest_codebase": {"type": "object", "required": ["repo"],
         "properties": {"repo": {"type": "string"}, "notebook_id": {"type": "string"},
                        "title": {"type": "string"}, "max_files": {"type": "integer"},
@@ -517,6 +555,11 @@ _DESCRIPTIONS: dict[str, str] = {
         "returns per-signal scores, a type_mix and type_diversity. `weights` takes a preset name "
         "(balanced/news/lit_review/docs/project_kickstart/academic/forum_first) or an overrides "
         "object including kind_weights to value some source kinds over others.",
+    "research_export": "Generate an ACTIONABLE research report from a notebook's sources: a "
+        "verdict, the source-kind mix, the problems found (blocked videos, coverage gaps, "
+        "redundant sources) and concrete NEXT ACTIONS. fmt='markdown' (default, human report), "
+        "'json', or 'csv' (per-source rows). deep=true adds ablation/redundancy. The "
+        "'what do I do now' output — safe to hand to a human or paste into a PR.",
     "research_ingest_codebase": "Ingest a codebase (GitHub URL or local path) and "
         "add it to NotebookLM; creates a notebook unless notebook_id is given. "
         "mode='digest' (default) adds a structure summary only; mode='files' adds the real "
@@ -558,6 +601,7 @@ _DESCRIPTIONS: dict[str, str] = {
 _BINDINGS = {
     "research_run_experiment": "run_experiment",
     "research_score_notebook": "score_notebook",
+    "research_export": "export_report",
     "research_ingest_codebase": "ingest_codebase",
     "research_fix_videos": "fix_videos",
     "code_index": "code_index",
@@ -579,7 +623,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 19 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 20 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():

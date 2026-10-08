@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- **`research_export` — turn a score into an action.** New MCP tool that renders a
+  notebook's scored sources as an ACTIONABLE report: a verdict, the source-kind mix, the
+  problems found (blocked videos, coverage gaps, redundant sources) and numbered next
+  actions. `fmt=markdown` (default, human report), `json`, or `csv` (per-source rows);
+  `deep=true` adds ablation/redundancy. New `notelab.research.report` module (pure,
+  deterministic). Tool count 19 → 20.
 - **Per-kind value weights (`kind_weights`) — you own what you value.** `QualityWeights` takes a
   `{kind: multiplier}` map so a user can value papers over forums, forums/videos over papers, or
   anything in between (`0.0` = ignore a kind entirely). No fixed global ranking of kinds. New
