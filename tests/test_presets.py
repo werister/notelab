@@ -6,8 +6,19 @@ from notelab.research.quality import SourceFeatures
 
 
 def test_presets_exist():
-    assert set(PRESETS) >= {"news", "lit_review", "docs", "balanced", "project_kickstart"}
+    assert set(PRESETS) >= {"news", "lit_review", "docs", "balanced", "project_kickstart",
+                            "academic", "forum_first"}
     assert all(isinstance(w, QualityWeights) for w in PRESETS.values())
+
+
+def test_academic_and_forum_presets_express_opposite_values():
+    """The kind-based presets encode opposite user values via kind_weights — academic
+    privileges papers over forums/videos, forum_first does the reverse. Neither is a
+    global truth; both are legitimate per the user-owns-value principle."""
+    acad = PRESETS["academic"].kind_weights
+    forum = PRESETS["forum_first"].kind_weights
+    assert acad["paper"] > acad["discussion"] and acad["paper"] > acad["video"]
+    assert forum["discussion"] > forum["paper"] and forum["video"] > forum["paper"]
 
 
 def test_project_kickstart_preset_rewards_a_diverse_mix_of_kinds():

@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -203,23 +203,39 @@ class QualityWeights:
     # e.g. {"decoder": {"decoding", "bp", "mwpm"}}. A source covers the question term
     # if it contains the term OR any of its expansions.
     term_expansions: dict[str, set[str]] = field(default_factory=dict)
+    # Per-KIND value weights — the "user owns what they value" knob. Maps a source
+    # kind (paper/docs/repo/video/discussion/reference/web) to a 0..N multiplier on
+    # that source's contribution to the composite. Empty = every kind counts equally
+    # (today's neutral default). A weight of 0.0 means "ignore this kind entirely"
+    # (it won't raise the score and won't earn kind-diversity credit). This is how a
+    # user says "for a lit review I value papers, not forum posts" or "for learning a
+    # tool I value step-by-step videos and discussion above papers" — see
+    # docs/DESIGN-PRINCIPLE-user-owns-value.md. There is NO fixed global ranking of
+    # kinds; this is purely the caller's choice.
+    kind_weights: dict[str, float] = field(default_factory=dict)
 
     def normalized(self) -> "QualityWeights":
+        """Return a copy with the five signal weights scaled to sum to 1. Uses
+        dataclasses.replace so every config field (incl. future ones) is carried
+        automatically — never hand-list fields here again."""
         total = self.authority + self.diversity + self.recency + self.depth + self.relevance
         if total <= 0:
             return self
-        return QualityWeights(
+        return replace(
+            self,
             authority=self.authority / total,
             diversity=self.diversity / total,
             recency=self.recency / total,
             depth=self.depth / total,
             relevance=self.relevance / total,
-            recency_halflife_days=self.recency_halflife_days,
-            depth_target_chars=self.depth_target_chars,
-            diversity_type_weight=self.diversity_type_weight,
-            authority_overrides=self.authority_overrides,
-            term_expansions=self.term_expansions,
         )
+
+    def kind_weight(self, kind: str) -> float:
+        """The value multiplier for a source kind. Default 1.0 when no per-kind
+        weights are configured, or for a kind the user didn't mention."""
+        if not self.kind_weights:
+            return 1.0
+        return max(0.0, self.kind_weights.get(kind, 1.0))
 
 
 # --- Per-signal scorers (each returns 0..1) -------------------------------------
@@ -306,19 +322,30 @@ def domain_diversity_score(sources: list[SourceFeatures]) -> float:
     return max(0.0, min(1.0, base * distinct_ratio))
 
 
-def type_diversity_score(sources: list[SourceFeatures]) -> float:
+def type_diversity_score(sources: list[SourceFeatures],
+                         kind_weights: dict[str, float] | None = None) -> float:
     """How many of the distinct research KINDS the set spans (paper/docs/repo/video/
     discussion/...), normalized by how many kinds a set this size could realistically
     cover. This is what makes "a paper + a repo + a video + a Reddit thread" rank as
     genuinely diverse while "six blogs on six domains" does not — the core NoteLab
     premise that a research library should be a *mix of kinds*, not just a spread of
-    hostnames. One source scores 0."""
+    hostnames. One source scores 0.
+
+    `kind_weights`: if the user has valued a kind at 0.0 (they don't care about it),
+    that kind does not earn diversity credit — "diverse" means diverse across the kinds
+    the user actually values, honoring the user-owns-value principle."""
     if len(sources) <= 1:
         return 0.0
+    kw = kind_weights or {}
+
+    def _valued(s: SourceFeatures) -> bool:
+        # excluded if the user zeroed this kind out
+        return kw.get(s.kind, 1.0) > 0 if kw else True
+
     # a blocked bot-wall shell doesn't contribute real variety — a "video" that's just
     # a sign-in page isn't a video source in any useful sense, so exclude blocked ones
     # from the kind set (verified live: Deep Research imports videos as blocked pages).
-    kinds = {s.kind for s in sources if not s.is_blocked}
+    kinds = {s.kind for s in sources if not s.is_blocked and _valued(s)}
     # the richest meaningfully-distinct palette we reward spanning (exclude the two
     # neutral fallbacks from the denominator so hitting them doesn't look like variety).
     rich_kinds = {k for k in kinds if k not in ("web",)}
@@ -328,15 +355,17 @@ def type_diversity_score(sources: list[SourceFeatures]) -> float:
     return max(0.0, min(1.0, len(rich_kinds) / reachable))
 
 
-def diversity_score(sources: list[SourceFeatures], type_weight: float = 0.5) -> float:
+def diversity_score(sources: list[SourceFeatures], type_weight: float = 0.5,
+                    kind_weights: dict[str, float] | None = None) -> float:
     """Composite set-level diversity: a blend of domain spread and research-kind spread.
     `type_weight` (0..1) sets how much the kind mix counts vs the domain mix; the default
     0.5 weights them equally. type_weight=0.0 reproduces the original domain-only score,
-    so existing numbers move only when kind variety actually differs."""
+    so existing numbers move only when kind variety actually differs. `kind_weights`
+    (optional) lets the user exclude kinds they don't value from the kind-spread term."""
     dom = domain_diversity_score(sources)
     if type_weight <= 0.0:
         return dom
-    typ = type_diversity_score(sources)
+    typ = type_diversity_score(sources, kind_weights=kind_weights)
     tw = max(0.0, min(1.0, type_weight))
     return max(0.0, min(1.0, (1.0 - tw) * dom + tw * typ))
 
@@ -418,11 +447,23 @@ def score_sources(
         return QualityReport(0.0, 0.0, 0, [], {}, _weights_dict(w),
                              type_mix={}, type_diversity=0.0, domain_diversity=0.0)
 
-    mean_auth = sum(p.authority for p in per_source) / n
-    mean_depth = sum(p.depth for p in per_source) / n
-    mean_rec = sum(p.recency for p in per_source) / n
-    mean_rel = sum(p.relevance for p in per_source) / n
-    div = diversity_score(sources, type_weight=w.diversity_type_weight)
+    # Per-KIND value weighting: each source's signals contribute in proportion to how
+    # much the user values its kind (kind_weight). With no kind_weights configured
+    # every weight is 1.0, so this reduces exactly to a plain mean. A kind weighted
+    # 0.0 drops out of the score entirely. The denominator is the sum of kind weights
+    # (not n) so the weighted mean stays in 0..1.
+    kw = [w.kind_weight(s.kind) for s in sources]
+    wsum = sum(kw)
+    if wsum <= 0:
+        # user zeroed out every kind present — nothing they value is here.
+        mean_auth = mean_depth = mean_rec = mean_rel = 0.0
+    else:
+        mean_auth = sum(p.authority * k for p, k in zip(per_source, kw)) / wsum
+        mean_depth = sum(p.depth * k for p, k in zip(per_source, kw)) / wsum
+        mean_rec = sum(p.recency * k for p, k in zip(per_source, kw)) / wsum
+        mean_rel = sum(p.relevance * k for p, k in zip(per_source, kw)) / wsum
+    div = diversity_score(sources, type_weight=w.diversity_type_weight,
+                          kind_weights=w.kind_weights)
 
     composite = (
         w.authority * mean_auth
@@ -442,7 +483,7 @@ def score_sources(
         },
         weights=_weights_dict(w),
         type_mix=dict(Counter(p.kind for p in per_source)),
-        type_diversity=type_diversity_score(sources),
+        type_diversity=type_diversity_score(sources, kind_weights=w.kind_weights),
         domain_diversity=domain_diversity_score(sources),
     )
 
@@ -471,6 +512,21 @@ PRESETS: dict[str, QualityWeights] = {
     # (the canonical doc is what you want, not many opinions).
     "docs": QualityWeights(authority=0.35, depth=0.30, relevance=0.25,
                            diversity=0.05, recency=0.05),
+    # Academic-only: the user values papers and official docs; forums, videos and
+    # random blogs are discounted hard. Demonstrates the "user owns what they value"
+    # principle — nothing here says papers are globally "better", it's this user's call.
+    "academic": QualityWeights(
+        authority=0.35, depth=0.30, diversity=0.10, relevance=0.20, recency=0.05,
+        recency_halflife_days=1825.0, depth_target_chars=8000,
+        kind_weights={"paper": 1.0, "docs": 0.8, "reference": 0.5,
+                      "repo": 0.4, "web": 0.3, "video": 0.1, "discussion": 0.1}),
+    # Forum-first / learn-by-community: the user values discussion and step-by-step
+    # videos above papers (e.g. learning a tool, debugging a real-world setup).
+    "forum_first": QualityWeights(
+        authority=0.10, depth=0.15, diversity=0.25, relevance=0.25, recency=0.25,
+        recency_halflife_days=180.0, diversity_type_weight=0.7,
+        kind_weights={"discussion": 1.0, "video": 0.9, "docs": 0.7, "repo": 0.6,
+                      "web": 0.5, "paper": 0.4, "reference": 0.4}),
     # Starting a project: you want a *diverse mix of kinds* — papers for the theory,
     # docs/repos to build on, step-by-step videos, and community discussion for the
     # gotchas. Diversity dominates and leans hard on KIND spread; recency matters

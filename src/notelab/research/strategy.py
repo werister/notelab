@@ -13,7 +13,7 @@ suggested strategies straight into the next A/B run.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .ab import Strategy
 from .quality import QualityWeights
@@ -62,9 +62,9 @@ def tune_weights_from_winner(signal_means: dict[str, float],
         tuned[k] = (1 - learning_rate) * cur[k] + learning_rate * target
     s = sum(tuned.values()) or 1.0
     tuned = {k: v / s for k, v in tuned.items()}
-    return QualityWeights(**tuned, recency_halflife_days=b.recency_halflife_days,
-                          depth_target_chars=b.depth_target_chars,
-                          authority_overrides=b.authority_overrides)
+    # replace() keeps every other config field (diversity_type_weight, kind_weights,
+    # term_expansions, authority_overrides, …) — only the five signal weights change.
+    return replace(b, **tuned)
 
 
 def suggest_strategies(topic: str, best_prompt: str | None,

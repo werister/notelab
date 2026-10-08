@@ -124,6 +124,63 @@ def test_classify_source_type_covers_the_core_kinds():
     assert s.kind == "paper"
 
 
+def test_kind_weights_let_the_user_own_what_they_value():
+    """The 'user owns what they value' principle: the SAME sources score differently
+    under different per-kind value profiles, and a kind weighted 0.0 contributes
+    nothing to the composite or to kind-diversity."""
+    from notelab.research.quality import QualityWeights
+    srcs = [
+        _src(url="https://arxiv.org/abs/1", content="rag theory " * 150),            # paper
+        _src(url="https://reddit.com/r/x/y", content="rag community gotchas " * 120),  # discussion
+        _src(url="https://youtube.com/watch?v=z", content="rag step by step " * 120),  # video
+    ]
+    q = "how to build a rag app"
+    # a user who values ONLY papers: forum+video zeroed out
+    papers_only = score_sources(
+        srcs, q, QualityWeights(kind_weights={"paper": 1.0, "discussion": 0.0, "video": 0.0})
+    ).as_dict()
+    # a user who values forums/videos over papers
+    forum_first = score_sources(
+        srcs, q, QualityWeights(kind_weights={"discussion": 1.0, "video": 1.0, "paper": 0.1})
+    ).as_dict()
+    # the two profiles must produce different composites on identical sources
+    assert papers_only["quality_score"] != forum_first["quality_score"]
+    # with forum+video valued 0, only the paper kind counts toward diversity
+    assert papers_only["type_diversity"] < 0.5
+    # neutral default (no kind_weights) still treats all kinds equally -> full spread
+    neutral = score_sources(srcs, q, QualityWeights()).as_dict()
+    assert neutral["type_diversity"] == 1.0
+
+
+def test_kind_weights_absent_reproduces_neutral_mean_exactly():
+    """No kind_weights configured must be a pure no-op: identical to the plain mean,
+    so existing scores never move unless the user opts in."""
+    from notelab.research.quality import QualityWeights
+    srcs = [
+        _src(url="https://arxiv.org/abs/1", content="x " * 100),
+        _src(url="https://blog.example/2", content="y " * 100),
+    ]
+    w_plain = QualityWeights()
+    w_explicit_ones = QualityWeights(kind_weights={"paper": 1.0, "web": 1.0})
+    a = score_sources(srcs, "topic", w_plain).quality_score
+    b = score_sources(srcs, "topic", w_explicit_ones).quality_score
+    assert abs(a - b) < 1e-9
+
+
+def test_normalized_preserves_kind_weights_and_config():
+    """normalized() must carry kind_weights (and every other config field) through —
+    the dataclasses.replace fix. A regression here would silently drop user intent."""
+    from notelab.research.quality import QualityWeights
+    w = QualityWeights(kind_weights={"video": 0.0}, diversity_type_weight=0.8,
+                       term_expansions={"a": {"b"}}, authority_overrides={"x.com": 0.9})
+    n = w.normalized()
+    assert n.kind_weights == {"video": 0.0}
+    assert n.diversity_type_weight == 0.8
+    assert n.term_expansions == {"a": {"b"}}
+    assert n.authority_overrides == {"x.com": 0.9}
+    assert abs((n.authority + n.diversity + n.recency + n.depth + n.relevance) - 1.0) < 1e-9
+
+
 def test_blocked_botwall_video_scores_low_depth_and_loses_kind_credit():
     """A YouTube link imported as a 'Sign in to confirm you're not a bot' shell (seen
     live from NotebookLM Deep Research) is long but empty. It must NOT earn full depth,

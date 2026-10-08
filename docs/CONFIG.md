@@ -39,7 +39,33 @@ alongside the blended `diversity`, so the number is auditable. Set an explicit
 | `lit_review` | 0.30 | 0.00 | 0.25 | **0.30** | 0.15 | 5 y | surveys — depth + breadth, recency irrelevant |
 | `docs` | **0.35** | 0.05 | 0.05 | 0.30 | 0.25 | — | API/technical — the canonical doc, not many opinions |
 | `project_kickstart` | 0.15 | 0.20 | **0.30** | 0.15 | 0.20 | 18 mo | starting a project — a diverse mix of papers, docs, repos, videos and community discussion; leans hard on kind spread (`diversity_type_weight=0.8`) |
+| `academic` | **0.35** | 0.05 | 0.10 | 0.30 | 0.20 | 5 y | papers + official docs; forums/videos discounted via `kind_weights` |
+| `forum_first` | 0.10 | **0.25** | 0.25 | 0.15 | 0.25 | 6 mo | learn-by-community — values discussion + step-by-step videos above papers via `kind_weights` |
 | `balanced` | 0.25 | 0.15 | 0.20 | 0.20 | 0.20 | 1 y | the default |
+
+### Per-kind value weights — you own what you value
+
+Signal weights decide *how* a source is judged; **`kind_weights`** decides *which kinds you
+care about at all*. It maps a source kind (`paper · docs · repo · video · discussion ·
+reference · web`) to a 0..N multiplier on that source's contribution to the score:
+
+```python
+from notelab.research.quality import QualityWeights
+# "For this literature review I value papers; forums and videos shouldn't move the score."
+w = QualityWeights(kind_weights={"paper": 1.0, "docs": 0.8, "discussion": 0.0, "video": 0.0})
+# "I'm learning a tool — community threads and walkthroughs matter most."
+w = QualityWeights(kind_weights={"discussion": 1.0, "video": 0.9, "paper": 0.3})
+```
+
+- An empty `kind_weights` (the default) treats every kind equally — no kind is privileged.
+- A weight of **0.0** means "ignore this kind entirely": it won't raise the score and won't
+  earn kind-diversity credit.
+- There is **no fixed global ranking** of kinds. "Academic beats forums" is one user's choice,
+  expressed as weights — not a rule baked into NoteLab. See
+  [docs/DESIGN-PRINCIPLE-user-owns-value.md](DESIGN-PRINCIPLE-user-owns-value.md).
+
+Pass `kind_weights` in a `weights` dict from any MCP tool that takes weights, or start from the
+`academic` / `forum_first` presets and override.
 
 ### Use a preset
 
