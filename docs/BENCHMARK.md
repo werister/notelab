@@ -81,6 +81,34 @@ What this says:
 
 Where a notebook of repos could still win, which this run does not test: far more files than an agent can grep economically, many repos at once, mixing in issues, docs and prose, and reuse across sessions. At 2 repos and ~22k lines it did not win on cost or speed.
 
+### Round 2: targeted lookups and versions, with a local code index
+
+After round 1, NoteLab gained a local code index (`code_find`, `code_versions`, `code_diff`;
+see the README). Six targeted questions over click 8.1.7, click main and flask: every call
+site of `getpass`, callers of a method, the verbatim source of a method, direct subclasses of a
+class, the signature of `Context.forward` in two versions, and which classes were added between
+versions. Checked against `grep`/`diff` ground truth I computed first.
+
+| Arm | What the agent has | Correct | Cost | Turns | Time |
+|---|---|---|---|---|---|
+| **A** | both click versions and flask on disk (I pre-checked-out the old version), `Read`/`Glob`/`Grep` | **6 / 6** | $0.19 | 9 | 37 s |
+| **C** | only the local index CLI | **6 / 6** | $0.25 | 15 | 43 s |
+
+Honest reading: **a grep-capable agent is still as accurate and slightly cheaper here.** The
+index did not beat grep on cost or speed. Arm C needed more turns because it queries one thing
+at a time and, early on, hedged about what it hadn't checked.
+
+Two things this run is not fair to the index about, and one it is fair about:
+
+- **Not fair to the index:** I handed arm A a ready-made checkout of 8.1.7. In real use that is a
+  `git worktree` per version you must create; the index keeps every version after one `index` call.
+- **Not fair to the index:** the first arm C attempt failed on my own setup errors and then did worse
+  ($0.29, 25 turns) before I documented the `subclasses` and `diff` commands to the agent and
+  added the `subclasses` lookup, which did not exist. Second attempt shown above. That tuning
+  after seeing a result is a bias in the index's favour, so treat its numbers as a ceiling.
+- **Fair:** it is a different tool from grep, not a faster one. Its claim is exactness and
+  retained history (`diff` gave the full added/removed/changed function lists in one call), not speed.
+
 ---
 
 ## Appendix: fresh research on one topic (the weaker benchmark)

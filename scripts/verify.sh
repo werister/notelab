@@ -17,9 +17,10 @@ echo "NoteLab verify"
 check "engine imports (stdlib only)"        "$PY" -c "import notelab.server"
 check "offline test suite"                  "$PY" -m pytest -q -o addopts= -x
 check "self-improving loop demo"            "$PY" examples/self_improving_loop.py
+check "code index: exact lookup + versions"  "$PY" -m pytest -q -o addopts= tests/test_codeindex.py
 check "guard refuses --source-ids"          refuses ./nlmx notebook query nb "q" --source-ids s1
 check "guard refuses chat start"            refuses ./nlmx chat start nb
-check "skills present with frontmatter"     bash -c 'for s in nlm-skill research-loop skill-evolution; do head -1 skills/$s/SKILL.md | grep -q "^---" || exit 1; done'
+check "skills present with frontmatter"     bash -c 'for s in nlm-skill research-loop skill-evolution code-questions; do head -1 skills/$s/SKILL.md | grep -q "^---" || exit 1; done'
 if command -v nlm >/dev/null; then
   check "nlm on PATH (needed for live research)" nlm --version
 else

@@ -11,9 +11,16 @@
   `docs/NLMX.md` (guard evidence, moved out of the README).
 - Guard live evals: 6/6 across two model families.
 
+- **Code index** (`notelab.codeindex`, tools `code_index` / `code_find` / `code_versions` / `code_diff`):
+  local, stdlib, zero-token. Exact source for definitions, AST-accurate callers and subclasses, ranked
+  text search; every indexed version is kept (content-deduplicated) and diffable.
+- `research_ingest_codebase(mode="files")`: ingest the real source files (bundled, with path headers)
+  instead of only a structure digest. Default stays `digest`.
+- `code-questions` skill; `scripts/bench_code.py` and `scripts/bench_corpus.py`.
+
 ### Changed
 - README rewritten: observed-failure table, three diagrams, per-agent install, try-it prompts.
-- Test suite: 334 passed, 2 optional live tests skipped.
+- Test suite: 344 passed, 2 optional live tests skipped.
 
 ### Fixed
 - `brag-output/work/render.py` no longer hardcodes a local path.

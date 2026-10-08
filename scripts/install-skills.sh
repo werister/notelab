@@ -13,7 +13,7 @@ targets=$target; [ "$target" = all ] && targets="claude cursor"
 
 for t in $targets; do
   dest=$(dest_for "$t"); mkdir -p "$dest"
-  for s in nlm-skill research-loop skill-evolution; do
+  for s in nlm-skill research-loop skill-evolution code-questions; do
     rm -rf "${dest:?}/$s"
     if [ "$mode" = link ]; then ln -s "$PWD/skills/$s" "$dest/$s"; else cp -R "skills/$s" "$dest/$s"; fi
     echo "installed $s -> $dest/$s"

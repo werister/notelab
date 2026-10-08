@@ -32,6 +32,7 @@ NoteLab verify
   PASS  engine imports (stdlib only)
   PASS  offline test suite
   PASS  self-improving loop demo
+  PASS  code index: exact lookup + versions
   PASS  guard refuses --source-ids
   PASS  guard refuses chat start
   PASS  skills present with frontmatter
@@ -115,11 +116,22 @@ limits (sources per notebook, daily usage) still apply.
 
 ### Where it fits, and where it doesn't
 
-It shines on **papers, docs and other prose** you want to question repeatedly. For **code**, we
-measured no advantage at two repos and ~22k lines: an agent using grep and file reads got
-all 8 questions right at the same cost and about 5x faster. `research_ingest_codebase`
-produces a structure digest, which on its own could not answer any of our questions;
-adding the raw source files as sources worked. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md#coding-questions-over-several-repos).
+- **Papers, docs, prose you will question repeatedly:** the notebook route. Measured above.
+- **Code:** a plain agent with grep already answers code questions well. We measured a tie on
+  correctness and cost at two repos (~22k lines), with grep about 5x faster. So for code, NoteLab
+  adds three things grep does not, and does not claim to beat it on speed:
+  1. **Exact, targeted lookups you can trust**: `code_find` returns the real source with
+     `repo@version/path:line` for *where is X defined*, *who calls X* (AST-accurate in Python),
+     *what subclasses X* and ranked text search. Indexed locally in under a second, no model tokens.
+  2. **Versions that are never forgotten.** Every `code_index` run keeps a snapshot (labelled by git
+     commit), deduplicated by content. Ask about any past version, or `code_diff` two of them:
+     on click 8.1.7 vs main it listed 1 file added, 140 functions added, 78 removed and 293 changed
+     in one call, and each version's `Context.forward` stayed queryable with no checkout.
+  3. **Many repos in one place**, plus an optional notebook (`research_ingest_codebase(mode="files")`)
+     for conceptual, cross-document questions that grep can't answer.
+
+  `research_ingest_codebase`'s default `digest` mode holds no source, so on its own it answered 0 of 8
+  questions; use `mode="files"`. Numbers and caveats: [docs/BENCHMARK.md](docs/BENCHMARK.md#coding-questions-over-several-repos).
 
 ## How it works
 
@@ -176,6 +188,7 @@ regresses; the tree is green on both runs.
 | I want to… | Run | Needs |
 |---|---|---|
 | See the loop work | `python examples/self_improving_loop.py` | Python only |
+| Ask exact questions about code, across versions | `python3 -m notelab.codeindex index <repo>` then `find` / `diff` | Python only |
 | Check my install | `scripts/verify.sh` | Python only |
 | Use the skills in my agent | `scripts/install-skills.sh claude` | Claude Code or Cursor |
 | Run the live research tools | [Go live](#go-live-real-notebooklm-research) | `nlm` account login |
@@ -184,12 +197,12 @@ regresses; the tree is green on both runs.
 
 ## The skills
 
-Three skills in `skills/`. Install all of them: `scripts/install-skills.sh <claude|cursor|all> [--link] [--with-guard]`
+Four skills in `skills/`. Install all of them: `scripts/install-skills.sh <claude|cursor|all> [--link] [--with-guard]`
 (`--link` symlinks so `git pull` updates them).
 
 <details open><summary><b>research-loop</b>: research <i>through</i> NoteLab</summary>
 
-Use it when the job is "research X and get better at it". It drives the 14 MCP tools
+Use it when the job is "research X and get better at it". It drives the research MCP tools
 through the loop above and carries the rules: evolve is dry-run first, guard work goes
 through `nlmx`, record wins in the ledger instead of remembering them.
 
@@ -207,6 +220,17 @@ the live-run budget before spending anything.
 - **Try:** `python skills/skill-evolution/scripts/evolve.py --init`
 - **You should see:** a walkthrough ending in the exact duel command and its run count.
 - **Protocol:** [SKILL.md](skills/skill-evolution/SKILL.md).
+</details>
+
+<details><summary><b>code-questions</b>: targeted, versioned code lookups</summary>
+
+Index a repo once, then ask exact questions: where is X defined (with its exact source), who calls
+X, what subclasses X, ranked text search, and what changed between two versions. Local and
+instant, no NotebookLM account needed.
+
+- **Try:** `python3 -m notelab.codeindex index . && python3 -m notelab.codeindex find main --kind def`
+- **You should see:** `<repo>@<commit>/<path>:<line>  [function main]` followed by the real source.
+- **Details:** [SKILL.md](skills/code-questions/SKILL.md).
 </details>
 
 <details><summary><b>nlm-skill</b>: operate NotebookLM safely</summary>
@@ -240,6 +264,7 @@ scripts/install-skills.sh cursor --with-guard
 copilot skill add skills/research-loop
 copilot skill add skills/skill-evolution
 copilot skill add skills/nlm-skill
+copilot skill add skills/code-questions
 ```
 </details>
 
@@ -270,7 +295,7 @@ scripts/verify.sh                    # now also confirms nlm is on PATH
 
 ## Reliability and security
 
-**Tests.** Offline, no account needed: 334 pass, 2 optional live tests skip without keys.
+**Tests.** Offline, no account needed: 344 pass, 2 optional live tests skip without keys.
 CI runs on Python 3.10, 3.12 and 3.13. `scripts/verify.sh` is the same checklist on your machine.
 
 **Live proof.** Unit tests prove the guard logic. The eval harness proves a real agent
@@ -301,7 +326,7 @@ whether an answer is correct. It does not handle your Google credentials: `nlm` 
 personal data, identity, media, fixtures): [docs/SECURITY-LOG.md](docs/SECURITY-LOG.md).
 Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
-## MCP tools (14)
+## MCP tools (18)
 
 <details><summary>Full tool table</summary>
 
@@ -320,7 +345,11 @@ Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 | `research_learn_topic(question, explore?)` | Turn a topic's experiment history into prompt mutations + a tuned weight profile |
 | `research_spar(question, prompt, families?)` | Run one prompt through several model-family CLIs over a shared corpus; score and attribute each |
 | `research_family_leaderboard()` | Which model family finds the best sources for which kind of question |
-| `research_ingest_codebase(repo, notebook_id?, title?, max_files?)` | Add a repo's structure/API digest as a source |
+| `research_ingest_codebase(repo, notebook_id?, title?, max_files?, mode?, max_sources?)` | Add a repo to a notebook: `digest` (structure summary, default) or `files` (the real source, bundled) |
+| `code_index(repo, name?, version?)` | Index a repo locally as a kept, versioned snapshot (default label: git commit) |
+| `code_find(query, kind?, repo?, version?, limit?)` | Exact, instant lookup: `def` (with source), `callers`, `subclasses`, `text`, `any` |
+| `code_versions(repo?)` | List every kept version |
+| `code_diff(repo, old, new)` | Files and functions added / removed / changed between two versions |
 
 Source-quality weights are config, not code: pass a preset (`news`, `lit_review`, `docs`,
 `balanced`) or your own vector. See [docs/CONFIG.md](docs/CONFIG.md).

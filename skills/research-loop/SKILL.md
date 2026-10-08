@@ -1,6 +1,6 @@
 ---
 name: research-loop
-description: "Self-improving deep research on Google NotebookLM via notelab's 14 research MCP tools. Use when the task is to RESEARCH A QUESTION (not just operate NotebookLM): A/B-test research prompts on source-data quality, score or value-assess a notebook, evolve/curate its sources, spar model families, ingest a codebase as a source, learn what works per topic, or verify guards with live-agent evals. Triggers on: research loop, A/B test prompts, improve research, source quality, curate notebook, evolve notebook, spar models, ingest codebase, learn topic, guard evals, notelab."
+description: "Self-improving deep research on Google NotebookLM via notelab's research MCP tools. Use when the task is to RESEARCH A QUESTION (not just operate NotebookLM): A/B-test research prompts on source-data quality, score or value-assess a notebook, evolve/curate its sources, spar model families, ingest a codebase as a source, learn what works per topic, or verify guards with live-agent evals. Triggers on: research loop, A/B test prompts, improve research, source quality, curate notebook, evolve notebook, spar models, ingest codebase, learn topic, guard evals, notelab."
 version: "1.0.0"
 ---
 
