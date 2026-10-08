@@ -16,7 +16,7 @@ version or diff two. "How did X look at v1.2?" and "what changed since?" stay an
 CLI:  python -m notelab.codeindex index <repo> [--name N] [--version V]
       python -m notelab.codeindex find <query> [--kind any|def|callers|text] [--repo N] [--version V|*]
       python -m notelab.codeindex versions [--repo N]
-      python -m notelab.codeindex diff <repo> <old> <new>
+      python -m notelab.codeindex diff <repo> <old> <new> [--summary]
 """
 from __future__ import annotations
 
@@ -329,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     pf.add_argument("--repo"); pf.add_argument("--version"); pf.add_argument("--limit", type=int, default=5)
     pv = sub.add_parser("versions"); pv.add_argument("--repo")
     pd = sub.add_parser("diff"); pd.add_argument("repo"); pd.add_argument("old"); pd.add_argument("new")
+    pd.add_argument("--summary", action="store_true", help="counts only")
     a = ap.parse_args(argv)
     ci = CodeIndex(a.db)
     if a.cmd == "index":
@@ -338,7 +339,13 @@ def main(argv: list[str] | None = None) -> int:
                          for v in ci.versions(a.repo)) or "(none indexed)")
     elif a.cmd == "diff":
         import json
-        print(json.dumps(ci.diff(a.repo, a.old, a.new), indent=2))
+        d = ci.diff(a.repo, a.old, a.new)
+        if a.summary:
+            print(f"{d['repo']} {d['old']} -> {d['new']}\n"
+                  f"files:     +{len(d['files_added'])} ~{len(d['files_changed'])} -{len(d['files_removed'])}\n"
+                  f"functions: +{len(d['symbols_added'])} ~{len(d['symbols_changed'])} -{len(d['symbols_removed'])}")
+        else:
+            print(json.dumps(d, indent=2))
     else:
         print(render(ci.find(a.query, a.kind, a.repo, a.limit, a.version)))
     return 0

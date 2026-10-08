@@ -7,7 +7,7 @@
   gate (margin + noise floor, cost rule, held-out, green tree).
 - `scripts/install-skills.sh` (claude/cursor, `--link`, `--with-guard`) and `scripts/verify.sh`
   (offline install checklist).
-- `SECURITY.md`, `SCOPE.md`, `docs/SECURITY-LOG.md` (publish-audit checklist + entries),
+- `SECURITY.md`, `SCOPE.md`,
   `docs/NLMX.md` (guard evidence, moved out of the README).
 - Guard live evals: 6/6 across two model families.
 

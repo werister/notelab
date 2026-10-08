@@ -1,23 +1,29 @@
 # NoteLab 🧪
 
-**Research that gets better every run, on a floor that won't silently corrupt your sources.**
+**Give your coding agent a research lab and a memory: questions it answers exactly, sources it can't silently corrupt, and every version of your code kept.**
 
 [![tests](https://github.com/werister/notelab/actions/workflows/tests.yml/badge.svg)](https://github.com/werister/notelab/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/engine-stdlib--only-informational)
 
-![NoteLab in 20 seconds: the guard says no, the loop learns, tests green, live agent evals 6/6](brag-output/demo.gif)
+![NoteLab in 23 seconds: the guard says no, the loop learns, every code version queryable, tests green, live agent evals 6/6](brag-output/demo.gif)
 
-*20 seconds of real output: a guard refusing a corrupting re-import, the self-improving
-loop picking a winner, the suite green, live agents stopped 6/6.
-[Full video with sound](brag-output/brag.mp4).*
+*23 seconds, every frame real output: a guard refusing a corrupting re-import, the self-improving
+loop picking a winner, an exact lookup and a function-level diff across two versions of a real library,
+the suite green, live agents stopped 6/6. [Full video with sound](brag-output/brag.mp4).*
 
-Most "NotebookLM MCP" tools are a remote control: create notebook, add source, query.
-NoteLab is the layer above. It treats **deep research as an experiment**: it scores the
-quality of the sources each run pulls in, A/B-tests the prompts that found them, keeps
-the winners, prunes stale sources, and remembers what worked per topic. Underneath sits
-a guard (`nlmx`) that stops the agent from silently duplicating or losing your sources.
+**Three things in one stdlib-only package, each one built to fix something we watched go wrong:**
+
+| | What it gives your agent | Why it matters |
+|---|---|---|
+| 🛡️ **A guard** (`nlmx`) | Refuses the four NotebookLM behaviours that silently corrupt a research library | A repeated import duplicates every source behind the same green checkmark. Real agents were pointed at the guard and stopped 6/6. |
+| 🧪 **A research lab** | Scores source quality, A/B-tests prompts, prunes stale sources, remembers winners per topic | Research stops being "this felt better" and becomes a number you can compare. Papers live in a notebook, so the agent asks questions instead of re-reading PDFs. |
+| 🔎 **A code index** | Exact `where is X` / `who calls X` / `what subclasses X` / `what changed since v1.2`, with real source and `path:line` | Instant, local, no model tokens, and **every version is kept**: ask about any past snapshot or diff two. |
+
+Most "NotebookLM MCP" tools are a remote control: create notebook, add source, query. NoteLab is the
+layer above it. We also measured where it does **not** help (for small code questions a grep-capable agent
+ties it), and say so below.
 
 ## Try it in 60 seconds (no NotebookLM account)
 
@@ -41,7 +47,52 @@ All good.
 
 Then install the skills into your agent, or paste this to Claude Code and let it do it:
 
-> Install NoteLab's skills: run `git clone https://github.com/werister/notelab ~/notelab && ~/notelab/scripts/install-skills.sh claude --with-guard && ~/notelab/scripts/verify.sh`, then tell me which of the three skills (nlm-skill, research-loop, skill-evolution) fits what I do and give me one prompt to try it.
+> Install NoteLab's skills: run `git clone https://github.com/werister/notelab ~/notelab && ~/notelab/scripts/install-skills.sh claude --with-guard && ~/notelab/scripts/verify.sh`, then tell me which of the four skills (nlm-skill, research-loop, skill-evolution, code-questions) fits what I do and give me one prompt to try it.
+
+## Build something with it (starter recipes)
+
+Each recipe is a prompt you paste into your agent after installing the skills. Pick the one that
+matches what you are trying to do.
+
+**1. "Understand a library before I build on it" (no account needed)**
+```bash
+python3 -m notelab.codeindex index ~/code/some-lib      # once; version = git commit
+```
+> Use the code-questions skill. Where is `<function>` defined, who calls it, and what subclasses `<Class>`? Show the exact source.
+
+You get `repo@commit/path:line` answers with real code, in milliseconds. Upgrade the library later, index again, and ask
+*"what changed in `<function>` between the two versions?"* with `code_diff`.
+
+**2. "Do a literature review that I can keep questioning" (needs `nlm`)**
+> Use the research-loop skill. Compare a broad and an authoritative-sources prompt on `<your question>`. Tell me which found better sources and by how much, then answer my follow-ups from the winning notebook.
+
+You get a winner, a margin and per-signal scores, then cited answers from a notebook, not a pile of PDFs in your agent's context.
+
+**3. "Stop my agent from wrecking my notebooks" (needs `nlm`)**
+```bash
+scripts/install-skills.sh claude --with-guard
+```
+> Using nlm-skill, import the research results into notebook `<id>`. Then do it again.
+
+The second import is refused, with a reason, instead of doubling your sources.
+
+**4. "Make my own prompt or skill measurably better"**
+```bash
+python3 skills/skill-evolution/scripts/evolve.py --init
+```
+A guided setup ends in the exact duel command and its run budget. A variant is promoted only if it beats the champion
+on a fixed battery without regressing a held-out task.
+
+## Which engine answers which question
+
+```mermaid
+flowchart TD
+    Q["Your question"] --> T{"What kind?"}
+    T -- "where is / who calls / what subclasses /<br/>show exact source / what changed since" --> CI["code_find, code_diff<br/>local index: exact, instant, versioned"]
+    T -- "papers, docs, prose,<br/>many sources, asked repeatedly" --> NB["Notebook<br/>cited answers, nothing re-read by the agent"]
+    T -- "how does the design hang together<br/>across files, docs and issues" --> NBF["Notebook of the real files<br/>research_ingest_codebase mode=files"]
+    T -- "small repo, one-off look" --> G["Plain grep is fine<br/>we measured a tie"]
+```
 
 ## What goes wrong without it
 
@@ -322,8 +373,6 @@ reported as environment errors, never as passes or failures.
 Anything else passes straight through to `nlm`. Source-quality scores say nothing about
 whether an answer is correct. It does not handle your Google credentials: `nlm` does.
 
-**Publishing hygiene.** Every publish is audited against a written checklist (secrets,
-personal data, identity, media, fixtures): [docs/SECURITY-LOG.md](docs/SECURITY-LOG.md).
 Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
 ## MCP tools (18)

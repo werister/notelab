@@ -29,7 +29,3 @@ Reports that a guarded behaviour can be bypassed through `nlmx` are especially w
 ## Supported versions
 
 Fixes land on `main` and ship in the next release.
-
-## Publishing audits
-
-Each publish is checked against the checklist in [docs/SECURITY-LOG.md](docs/SECURITY-LOG.md).
