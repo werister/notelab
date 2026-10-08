@@ -78,6 +78,20 @@ def test_tools_list_returns_specs():
     assert all(t["description"] and t["inputSchema"]["type"] == "object" for t in tools)
 
 
+def test_weights_schema_advertises_presets_and_kind_weights():
+    """MCP clients must be able to DISCOVER the scoring config: the `weights` arg of
+    scoring tools exposes the valid preset names and the kind_weights value profile,
+    not an opaque {'type':'object'}. Guards against the feature being invisible."""
+    srv = build_stdio_server(_tmp_logic())
+    resp = srv.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    tools = {t["name"]: t for t in resp["result"]["tools"]}
+    import json as _json
+    for name in ("research_score_notebook", "research_run_experiment", "research_assess"):
+        w = _json.dumps(tools[name]["inputSchema"]["properties"]["weights"])
+        assert "academic" in w and "forum_first" in w and "project_kickstart" in w
+        assert "kind_weights" in w
+
+
 def test_tools_call_suggest_prompt_roundtrip():
     srv = build_stdio_server(_tmp_logic())
     resp = srv.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",

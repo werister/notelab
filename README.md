@@ -191,6 +191,34 @@ Where the code index earns its place is exactness and *history* — it's a suppo
   `research_ingest_codebase`'s default `digest` mode holds only a structure summary, not source; use `mode="files"`
   when you want the notebook to answer detail questions.
 
+## You decide what counts as a good source
+
+NoteLab has **no fixed opinion** that papers beat forums or that a diverse mix is always best.
+*You* own what you value, and it changes with the task:
+
+- A **literature review** → papers and official docs; discount forums and videos.
+- **Learning a tool** → step-by-step videos and community threads *above* papers.
+- **Starting a project** → a balanced mix of all of them.
+
+Say so with `kind_weights` — a map from source kind (`paper · docs · repo · video ·
+discussion · reference · web`) to how much you value it. `0.0` means "ignore this kind
+entirely"; it won't raise the score or count toward diversity.
+
+```python
+# "For this review I value papers; forums and videos shouldn't move the score."
+weights = {"kind_weights": {"paper": 1.0, "docs": 0.8, "discussion": 0.0, "video": 0.0}}
+
+# "I'm learning a tool — walkthroughs and community threads matter most."
+weights = {"kind_weights": {"discussion": 1.0, "video": 0.9, "paper": 0.3}}
+```
+
+Two ready-made presets encode opposite-but-equally-valid values: **`academic`** (papers and
+docs over forums/videos) and **`forum_first`** (discussion and videos over papers). The same
+source set scores differently under each — because "good" is *your* call, not NoteLab's.
+Empty `kind_weights` (the default) treats every kind equally. Full detail:
+[docs/CONFIG.md](docs/CONFIG.md) and the design note
+[docs/DESIGN-PRINCIPLE-user-owns-value.md](docs/DESIGN-PRINCIPLE-user-owns-value.md).
+
 ## How it works
 
 ### 1. The guard: where `nlmx` sits
@@ -364,7 +392,7 @@ Claims here are backed by checks you can rerun. Full detail and commands: [docs/
 | Source scoring is auditable | Every composite decomposes into its five signals; weights are config | See any `research_score_notebook` output |
 | Code index is exact and versioned | Tests for verbatim source, AST callers and subclasses, text search, kept versions, diffs, non-Python symbols | In the offline suite |
 | Video repair works on real notebooks | Live: blocked YouTube copies detected, native copies added, a lecture answered from its transcript | Checked on a real notebook (see above) |
-| The whole package | 353 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
+| The whole package | 361 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
 
 **Design choices that limit blast radius**
 
@@ -384,7 +412,7 @@ handle your Google credentials: `nlm` does. Report vulnerabilities privately: [S
 | Tool | What it does |
 |---|---|
 | `research_run_experiment(question, strategies, weights?)` | A/B several prompt strategies; score each run's sources; rank; record to ledger |
-| `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score the data quality of an existing notebook's sources; returns per-signal scores plus a `type_mix` and `type_diversity` (how many papers/docs/repos/videos/discussions). `weights` takes a preset name (`project_kickstart`, `lit_review`, `news`, `docs`, `balanced`) or a dict; `semantic_expansions` needs `MISTRAL_API_KEY` |
+| `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score the data quality of an existing notebook's sources; returns per-signal scores plus a `type_mix` and `type_diversity` (how many papers/docs/repos/videos/discussions). `weights` takes a preset name (`project_kickstart`, `academic`, `forum_first`, `lit_review`, `news`, `docs`, `balanced`) or a dict (incl. `kind_weights`); `semantic_expansions` needs `MISTRAL_API_KEY` |
 | `research_history(experiment_id?, limit?)` | Browse the experiment ledger, or fetch one full result |
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
 | `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?, apply?)` | Plan create / merge / skip / evict over a notebook's sources; evictions stay behind the confirm gate |
@@ -403,8 +431,10 @@ handle your Google credentials: `nlm` does. Report vulnerabilities privately: [S
 | `code_versions(repo?)` | List every kept version |
 | `code_diff(repo, old, new)` | Files and functions added / removed / changed between two versions |
 
-Source-quality weights are config, not code: pass a preset (`project_kickstart`, `news`,
-`lit_review`, `docs`, `balanced`) or your own vector. See [docs/CONFIG.md](docs/CONFIG.md).
+Source-quality weights are config, not code: pass a preset (`project_kickstart`, `academic`,
+`forum_first`, `news`, `lit_review`, `docs`, `balanced`) or your own vector — including
+**`kind_weights`** to decide which source kinds you value (see below). Details in
+[docs/CONFIG.md](docs/CONFIG.md).
 </details>
 
 <details><summary>What the demo prints</summary>
@@ -430,9 +460,12 @@ Source-quality weights are config, not code: pass a preset (`project_kickstart`,
 ## Docs
 
 [DESIGN](docs/DESIGN.md) architecture and quality model · [NLMX](docs/NLMX.md) the guard and its evidence ·
-[CONFIG](docs/CONFIG.md) weights · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
+[CONFIG](docs/CONFIG.md) weights and `kind_weights` · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
 [EVALUATIONS](docs/EVALUATIONS.md) what is checked and how to rerun it ·
 [EVAL REPORT](docs/EVAL-REPORT-2026-10-08.md) a full hands-on eval pass ·
+[LIVE FINDINGS](docs/LIVE-FINDINGS-2026-10-08.md) real-NotebookLM test results ·
+[GAP ANALYSIS](docs/GAP-ANALYSIS-2026-vs-SOTA.md) where NoteLab stands vs. the state of the art, and what's next ·
+[DESIGN PRINCIPLE](docs/DESIGN-PRINCIPLE-user-owns-value.md) you own what you value ·
 [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
 
 ## Contributing

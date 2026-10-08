@@ -32,7 +32,10 @@ from .storage import Store
 
 
 def _weights_from(d) -> QualityWeights:
-    """Accept None, a preset NAME (e.g. 'news'), or a dict of weight overrides."""
+    """Accept None, a preset NAME (balanced/news/lit_review/docs/project_kickstart/
+    academic/forum_first), or a dict of overrides. Dict keys may include the five signal
+    weights plus recency_halflife_days, depth_target_chars, diversity_type_weight, and
+    kind_weights ({kind: multiplier}; 0.0 = ignore that kind). Unknown keys are dropped."""
     if not d:
         return QualityWeights()
     if isinstance(d, str):
@@ -415,15 +418,46 @@ class ToolLogic:
         return json.dumps({"leaderboard": self.store.family_leaderboard()}, indent=2)
 
 
+# Shared schema for the `weights` argument so MCP clients can DISCOVER what to pass:
+# either a preset name, or a dict of signal weights + the kind_weights value profile.
+# The "user owns what they value" knob (kind_weights) is advertised here, not hidden.
+_WEIGHTS_SCHEMA = {
+    "description": (
+        "Source-quality weights. Pass a preset NAME (one of: balanced, news, lit_review, "
+        "docs, project_kickstart, academic, forum_first) OR an object of overrides. "
+        "Object fields: authority, diversity, recency, depth, relevance (0..1 signal "
+        "weights, auto-normalized); recency_halflife_days, depth_target_chars; "
+        "diversity_type_weight (0..1, how much source-KIND spread counts vs domain spread); "
+        "and kind_weights, a map {kind: multiplier} over paper/docs/repo/video/discussion/"
+        "reference/web letting you value some kinds over others (0.0 = ignore that kind). "
+        "See docs/CONFIG.md and docs/DESIGN-PRINCIPLE-user-owns-value.md."
+    ),
+    "oneOf": [
+        {"type": "string",
+         "enum": ["balanced", "news", "lit_review", "docs",
+                  "project_kickstart", "academic", "forum_first"]},
+        {"type": "object",
+         "properties": {
+             "authority": {"type": "number"}, "diversity": {"type": "number"},
+             "recency": {"type": "number"}, "depth": {"type": "number"},
+             "relevance": {"type": "number"},
+             "recency_halflife_days": {"type": "number"},
+             "depth_target_chars": {"type": "integer"},
+             "diversity_type_weight": {"type": "number"},
+             "kind_weights": {"type": "object", "additionalProperties": {"type": "number"}},
+         }},
+    ],
+}
+
 # JSON-Schema input specs for each tool (used by the bundled stdio server's tools/list).
 _SCHEMAS: dict[str, dict] = {
     "research_run_experiment": {"type": "object", "required": ["question", "strategies"],
         "properties": {"question": {"type": "string"},
                        "strategies": {"type": "array", "items": {"type": "object"}},
-                       "weights": {"type": "object"}}},
+                       "weights": _WEIGHTS_SCHEMA}},
     "research_score_notebook": {"type": "object", "required": ["notebook_id"],
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
-                       "weights": {"type": "object"},
+                       "weights": _WEIGHTS_SCHEMA,
                        "semantic_expansions": {"type": "boolean"}}},
     "research_ingest_codebase": {"type": "object", "required": ["repo"],
         "properties": {"repo": {"type": "string"}, "notebook_id": {"type": "string"},
@@ -454,7 +488,8 @@ _SCHEMAS: dict[str, dict] = {
                        "apply": {"type": "boolean"}}},
     "research_assess": {"type": "object", "required": ["notebook_id"],
         "properties": {"notebook_id": {"type": "string"}, "question": {"type": "string"},
-                       "mode": {"type": "string"}, "weights": {"type": "object"},
+                       "mode": {"type": "string", "enum": ["fast", "deep"]},
+                       "weights": _WEIGHTS_SCHEMA,
                        "use_laya": {"type": "boolean"},
                        "semantic_expansions": {"type": "boolean"}}},
     "research_eval_skill": {"type": "object", "required": ["strategy_name"],
@@ -478,7 +513,10 @@ _SCHEMAS: dict[str, dict] = {
 _DESCRIPTIONS: dict[str, str] = {
     "research_run_experiment": "A/B-test research prompt strategies on one question; score "
         "each run's SOURCES by data quality; rank; record to the ledger.",
-    "research_score_notebook": "Score the data quality of an existing notebook's source set.",
+    "research_score_notebook": "Score the data quality of an existing notebook's source set; "
+        "returns per-signal scores, a type_mix and type_diversity. `weights` takes a preset name "
+        "(balanced/news/lit_review/docs/project_kickstart/academic/forum_first) or an overrides "
+        "object including kind_weights to value some source kinds over others.",
     "research_ingest_codebase": "Ingest a codebase (GitHub URL or local path) and "
         "add it to NotebookLM; creates a notebook unless notebook_id is given. "
         "mode='digest' (default) adds a structure summary only; mode='files' adds the real "
