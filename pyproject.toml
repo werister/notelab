@@ -28,6 +28,7 @@ laya = ["laya-mlx; python_version >= '3.11'"]
 
 [project.scripts]
 nlm-research-mcp = "notelab.server:main"
+notelab-code = "notelab.codeindex:main"
 
 [project.urls]
 Homepage = "https://github.com/werister/notelab"

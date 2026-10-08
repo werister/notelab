@@ -46,7 +46,7 @@ def test_build_server_returns_bundled_stdio():
     from notelab.mcp_stdio import StdioMCPServer
     srv = server.build_server()
     assert isinstance(srv, StdioMCPServer)
-    assert len(srv.tools) == 14
+    assert len(srv.tools) == 18
 
 
 class _FakeSdkApp:

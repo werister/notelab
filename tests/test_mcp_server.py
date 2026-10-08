@@ -51,7 +51,7 @@ def test_bundled_server_builds_with_all_fourteen_tools():
     srv = build_stdio_server(_tmp_logic())
     assert isinstance(srv, StdioMCPServer)
     assert set(srv.tools) == set(tool_names())
-    assert len(srv.tools) == 14
+    assert len(srv.tools) == 18
     assert "research_ingest_codebase" in srv.tools
 
 

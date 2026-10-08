@@ -532,3 +532,40 @@ class CodebaseIngester:
             # Check for comments before func declarations
             return bool(re.compile(r"//.*\nfunc ").search(content))
         return False
+
+
+def bundle_files(files: List[CodeFile], limit: int = 90_000) -> List[Tuple[str, str]]:
+    """Pack whole source files into (title, text) bundles of at most ~`limit` chars each.
+
+    Each file is preceded by a `# FILE: <path>` header so a notebook's answers and citations
+    name real paths. A file larger than `limit` is split across bundles at line boundaries,
+    each part headed `# FILE: <path> (part i/n)`. Order is path-sorted, so neighbours stay together.
+    """
+    pieces: List[Tuple[str, str]] = []
+    for f in sorted(files, key=lambda f: f.path):
+        if not f.content.strip():
+            continue
+        body = f.content
+        if len(body) + len(f.path) + 20 <= limit:
+            pieces.append((f.path, f"# FILE: {f.path}\n{body}\n"))
+            continue
+        lines, cur, size, parts = body.splitlines(), [], 0, []
+        for ln in lines:
+            if size + len(ln) + 1 > limit - len(f.path) - 40 and cur:
+                parts.append("\n".join(cur)); cur, size = [], 0
+            cur.append(ln); size += len(ln) + 1
+        if cur:
+            parts.append("\n".join(cur))
+        for i, part in enumerate(parts, 1):
+            pieces.append((f.path, f"# FILE: {f.path} (part {i}/{len(parts)})\n{part}\n"))
+    bundles: List[Tuple[str, str]] = []
+    cur_paths: List[str] = []
+    cur_text = ""
+    for path, text in pieces:
+        if cur_text and len(cur_text) + len(text) > limit:
+            bundles.append((cur_paths[0], cur_paths[-1], cur_text)); cur_paths, cur_text = [], ""
+        cur_paths.append(path); cur_text += text
+    if cur_text:
+        bundles.append((cur_paths[0], cur_paths[-1], cur_text))
+    n = len(bundles)
+    return [(f"[{i}/{n}] {a}" + (f" .. {b}" if b != a else ""), t) for i, (a, b, t) in enumerate(bundles, 1)]

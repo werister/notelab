@@ -118,7 +118,8 @@ class ToolLogic:
         return json.dumps(report, indent=2)
 
     def ingest_codebase(self, repo: str, notebook_id: str | None = None,
-                        title: str | None = None, max_files: int = 200) -> str:
+                        title: str | None = None, max_files: int = 200,
+                        mode: str = "digest", max_sources: int = 40) -> str:
         """Ingest a codebase (GitHub URL or local path) and add its digest as a
         NotebookLM source. Positive capability to pair with evolve_notebook's
         curation: this ADDS knowledge (structure, APIs, quality signals) where
@@ -126,16 +127,43 @@ class ToolLogic:
 
         The digest text is bounded (structure summaries, capped lists) but a
         pathological repo could still balloon argv, so text is capped at
-        100k chars with a visible truncation note."""
-        from .research.codebase_ingest import CodebaseIngester
+        100k chars with a visible truncation note.
+
+        mode="digest" (default): one structure/API summary source. Good for orientation,
+        but it holds no source code, so a notebook built from it cannot answer detail
+        questions. mode="files": the real files, bundled ~90k chars per source with
+        `# FILE: path` headers (at most `max_sources`; NotebookLM caps sources per
+        notebook). Pair with code_index/code_find for exact, instant lookups."""
+        from .research.codebase_ingest import CodebaseIngester, bundle_files
+        if mode not in ("digest", "files"):
+            return json.dumps({"error": "mode must be 'digest' or 'files'"}, indent=2)
         try:
-            digest = CodebaseIngester(max_files=max_files).ingest(repo)
+            digest = CodebaseIngester(
+                max_files=max_files,
+                max_file_lines=500 if mode == "digest" else 1_000_000).ingest(repo)
         except Exception as e:  # ValueError (bad URL/path) or network failure
             return json.dumps({"error": f"ingest failed for {repo!r}: {e}"}, indent=2)
         if not digest.files:
             return json.dumps({"error": f"ingest of {repo!r} found no ingestible "
                                         "files — nothing added. Check the path/URL and "
                                         "skip patterns."}, indent=2)
+        if mode == "files":
+            bundles = bundle_files(digest.files)
+            if len(bundles) > max_sources:
+                return json.dumps({"error": f"{digest.repo_name} needs {len(bundles)} sources "
+                    f"(> max_sources={max_sources}). Index it locally with code_index instead, "
+                    "or ingest a subdirectory / raise max_sources within your NotebookLM plan."}, indent=2)
+            try:
+                nb = notebook_id or self.adapter.create_notebook(f"[codebase] {digest.repo_name}")
+                results = [self.adapter.add_source(nb, text, title=f"{digest.repo_name} {t}")
+                           for t, text in bundles]
+            except NlmxError as e:
+                return json.dumps({"error": str(e)}, indent=2)
+            failed = [bundles[i][0] for i, (ok, _m) in enumerate(results) if not ok]
+            return json.dumps({"repo": repo, "repo_name": digest.repo_name, "mode": "files",
+                               "files": len(digest.files), "sources_added": len(bundles) - len(failed),
+                               "sources_failed": failed, "notebook_id": nb,
+                               "total_lines": digest.total_lines}, indent=2)
         text = digest.to_text()
         truncated = False
         if len(text) > 100_000:
@@ -158,6 +186,42 @@ class ToolLogic:
             "digest_chars": len(text), "truncated": truncated,
             "notebook_id": nb, "added": ok, "message": msg,
         }, indent=2)
+
+    def _code_index(self):
+        from .codeindex import CodeIndex
+        return CodeIndex(Path(self.store.path).with_name("code.db"))
+
+    def code_index(self, repo: str, name: str | None = None, version: str | None = None,
+                   max_files: int = 5000) -> str:
+        """Index a repo (local path or GitHub URL) as a new, kept version (default label: git
+        commit). Older versions stay queryable; re-indexing the same version replaces it."""
+        try:
+            return json.dumps(self._code_index().index(repo, name, version, max_files), indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"index failed for {repo!r}: {e}"}, indent=2)
+
+    def code_find(self, query: str, kind: str = "any", repo: str | None = None, limit: int = 5,
+                  version: str | None = None) -> str:
+        """Targeted code lookup over indexed repos: kind = def | callers | text | any.
+        version: a label from code_versions, or '*' for all; default is each repo's newest."""
+        from .codeindex import render
+        if kind not in ("any", "def", "callers", "subclasses", "text"):
+            return json.dumps({"error": "kind must be any|def|callers|subclasses|text"}, indent=2)
+        ci = self._code_index()
+        if not ci.repos():
+            return json.dumps({"error": "nothing indexed yet: call code_index(repo) first"}, indent=2)
+        return render(ci.find(query, kind, repo, limit, version))
+
+    def code_versions(self, repo: str | None = None) -> str:
+        """List every kept version of indexed repos (nothing is forgotten)."""
+        return json.dumps(self._code_index().versions(repo), indent=2)
+
+    def code_diff(self, repo: str, old: str, new: str) -> str:
+        """What changed between two indexed versions: files and functions added/removed/changed."""
+        try:
+            return json.dumps(self._code_index().diff(repo, old, new), indent=2)
+        except ValueError as e:
+            return json.dumps({"error": str(e)}, indent=2)
 
     def history(self, experiment_id: int | None = None, limit: int = 20) -> str:
         if experiment_id is not None:
@@ -323,7 +387,20 @@ _SCHEMAS: dict[str, dict] = {
                        "semantic_expansions": {"type": "boolean"}}},
     "research_ingest_codebase": {"type": "object", "required": ["repo"],
         "properties": {"repo": {"type": "string"}, "notebook_id": {"type": "string"},
-                       "title": {"type": "string"}, "max_files": {"type": "integer"}}},
+                       "title": {"type": "string"}, "max_files": {"type": "integer"},
+                       "mode": {"type": "string", "enum": ["digest", "files"]},
+                       "max_sources": {"type": "integer"}}},
+    "code_index": {"type": "object", "required": ["repo"],
+        "properties": {"repo": {"type": "string"}, "name": {"type": "string"},
+                       "version": {"type": "string"}, "max_files": {"type": "integer"}}},
+    "code_versions": {"type": "object", "properties": {"repo": {"type": "string"}}},
+    "code_diff": {"type": "object", "required": ["repo", "old", "new"],
+        "properties": {"repo": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}},
+    "code_find": {"type": "object", "required": ["query"],
+        "properties": {"query": {"type": "string"},
+                       "kind": {"type": "string", "enum": ["any", "def", "callers", "subclasses", "text"]},
+                       "repo": {"type": "string"}, "limit": {"type": "integer"},
+                       "version": {"type": "string"}}},
     "research_history": {"type": "object",
         "properties": {"experiment_id": {"type": "integer"}, "limit": {"type": "integer"}}},
     "research_suggest_prompt": {"type": "object", "required": ["question"],
@@ -360,8 +437,17 @@ _DESCRIPTIONS: dict[str, str] = {
         "each run's SOURCES by data quality; rank; record to the ledger.",
     "research_score_notebook": "Score the data quality of an existing notebook's source set.",
     "research_ingest_codebase": "Ingest a codebase (GitHub URL or local path) and "
-        "add its structure/API digest as a NotebookLM source; creates a notebook unless "
-        "notebook_id is given.",
+        "add it to NotebookLM; creates a notebook unless notebook_id is given. "
+        "mode='digest' (default) adds a structure summary only; mode='files' adds the real "
+        "source files so the notebook can answer detail questions.",
+    "code_index": "Index a repo (local path or GitHub URL) locally for exact, zero-token code "
+        "search. Run once per repo; re-run to refresh.",
+    "code_versions": "List every kept version of indexed repos: nothing is forgotten.",
+    "code_diff": "What changed between two indexed versions of a repo: files and functions "
+        "added, removed and changed.",
+    "code_find": "Targeted code lookup over indexed repos, instant and verbatim: kind='def' "
+        "(where is X defined, with exact source), 'callers' (every call site of X), "
+        "'subclasses' (direct subclasses of X), 'text' (ranked full-text search), or 'any'.",
     "research_history": "List past experiments, or fetch one full result by id.",
     "research_suggest_prompt": "Reuse the winning prompt from a prior experiment on the "
         "same question.",
@@ -389,6 +475,10 @@ _BINDINGS = {
     "research_run_experiment": "run_experiment",
     "research_score_notebook": "score_notebook",
     "research_ingest_codebase": "ingest_codebase",
+    "code_index": "code_index",
+    "code_find": "code_find",
+    "code_versions": "code_versions",
+    "code_diff": "code_diff",
     "research_history": "history",
     "research_suggest_prompt": "suggest_prompt",
     "research_evolve_notebook": "evolve_notebook",
@@ -404,7 +494,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 14 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 18 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():
