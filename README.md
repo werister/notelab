@@ -58,6 +58,58 @@ ground truth (`nlm source list`), not trusted at face value. Evidence in
 | 6 | Notebooks fill with duplicates and stale sources | Quality decays quietly | `research_evolve_notebook` plans create / merge / skip / evict (dry run first) |
 | 7 | Skills and prompts get edited and hoped about | No evidence either way | Champion vs challenger on a fixed battery, gated on margin, held-out and a green tree |
 
+## Why this is a good place to start
+
+If you are new to coding with agents, "research" is where most people start and where
+most of them burn time and money: ask an agent about a topic, and it opens ten pages,
+downloads PDFs, reads them into its own context, and summarizes. It works once, costs a
+lot, and you can't tell whether the second attempt was any better.
+
+NoteLab gives you three things a beginner usually has to learn the hard way:
+
+- **A guard rail.** The agent can't quietly wreck your library with a repeated command. A refusal explains itself, so you learn what went wrong instead of debugging a silent failure.
+- **A scoreboard.** Every run gets a number you can read and compare. You build the habit of measuring a prompt instead of trusting a feeling, which is the core skill of working with agents.
+- **Small, readable pieces.** The engine is plain Python with no dependencies, the tests run offline, and `scripts/verify.sh` tells you in seconds whether your setup works. You can read the whole thing.
+
+## Give your agent the internet (without giving it your context window)
+
+NotebookLM's Deep Research does the web work **on Google's side**: it searches, collects
+sources and imports them into a notebook. Your agent's model never downloads or reads them.
+NoteLab drives that loop and measures it.
+
+```
+You → agent → research_run_experiment("your question", strategies)
+              └─ for each strategy, via nlmx:  research run → web search → sources imported into a notebook
+              └─ NoteLab scores each source set locally (no model call)
+              └─ agent receives: winner, margin, per-signal scores, notebook ids
+You → agent → "answer from the winning notebook" → one grounded, cited answer
+```
+
+To use it:
+
+1. Install and log in to `nlm` ([Go live](#go-live-real-notebooklm-research)). That login is the only internet credential involved, and it stays with `nlm`.
+2. Install the skills (`scripts/install-skills.sh claude --with-guard`) so the agent knows the loop and the rules.
+3. Ask in plain language, for example: *"Use the research-loop skill. Compare a broad prompt and an authoritative-sources prompt on 'current treatment guidelines for X', and tell me which found better sources."*
+4. Read the `winner` and the per-signal scores, open the best sources yourself, and ask follow-ups against that notebook.
+
+### Why it saves tokens
+
+The usual alternative is an agent that fetches 70 PDFs, pushes them through its own
+context, and summarizes them, again for every follow-up question. NoteLab avoids that in
+three places:
+
+| Step | The usual way | With NoteLab |
+|---|---|---|
+| Finding and reading sources | The agent downloads and reads each document in its own context | NotebookLM retrieves and indexes them outside the agent |
+| Judging which sources are good | The model reads them and gives an opinion | A deterministic scorer run locally over the source list (domain, date, length, term overlap): **zero model tokens**, same input gives the same score |
+| Follow-up questions | Re-read or re-summarize the documents | Ask the notebook; the agent receives a cited answer, not the documents |
+| Trying the same topic again | Start from scratch | `research_suggest_prompt` replays the stored winner |
+
+Honest caveat: we haven't published a token benchmark, so there is no "X% cheaper"
+number here. The saving comes from the design above, and it is easy to check yourself by
+comparing your agent's token usage on the same question both ways. NotebookLM's own
+limits (sources per notebook, daily usage) still apply.
+
 ## How it works
 
 ### 1. The guard: where `nlmx` sits
