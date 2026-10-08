@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Skills** — `research-loop` and `skill-evolution` alongside `nlm-skill`; champion/challenger
+  gate (margin + noise floor, cost rule, held-out, green tree).
+- `scripts/install-skills.sh` (claude/cursor, `--link`, `--with-guard`) and `scripts/verify.sh`
+  (offline install checklist).
+- `SECURITY.md`, `SCOPE.md`, `docs/SECURITY-LOG.md` (publish-audit checklist + entries),
+  `docs/NLMX.md` (guard evidence, moved out of the README).
+- Guard live evals: 6/6 across two model families.
+
+### Changed
+- README rewritten: observed-failure table, three diagrams, per-agent install, try-it prompts.
+- Test suite: 334 passed, 2 optional live tests skipped.
+
+### Fixed
+- `brag-output/work/render.py` no longer hardcodes a local path.
+
 ## v0.1 — NoteLab
 
 First public cut: a self-improving research MCP server on top of Google NotebookLM,
