@@ -56,6 +56,33 @@ BENCH_OUT=r.jsonl python3 scripts/bench_corpus.py B claude --notebook <id>
 
 ---
 
+## Coding: questions over several repos
+
+Does the same idea help when the corpus is code, and the questions are the kind you ask to get
+unstuck? Two real repos, click and flask (~22k lines), in one place; 8 questions mixing
+problem-solving ("I want a Flask CLI command that prompts for a hidden password: which Flask and
+click pieces, in which files?"), cross-repo flow ("how does `flask` find and load the app?"),
+exact lookups, a verbatim-code request, and one question about a function that does not exist.
+I checked every answer against the source. Claude's CLI, one trial. Harness:
+[`scripts/bench_code.py`](../scripts/bench_code.py).
+
+| Arm | What the agent has | Correct | Cost | Turns | Input tokens (incl. cache) | Time |
+|---|---|---|---|---|---|---|
+| **A** | the two repos on disk, `Read`/`Glob`/`Grep` | **8 / 8** | $0.22 | 5 | ~214k | **45 s** |
+| **B** | a notebook of the 29 raw source files (click + flask `src`, as sources) | **8 / 8** | $0.21 | 9 | ~88k | 241 s |
+| **D** | a notebook with only what `research_ingest_codebase` produces (a ~2 KB digest per repo) | **0 / 8** | $0.16 | 9 | ~78k | 144 s |
+
+What this says:
+
+- **For code at this size, a plain agent with grep is already as good and about 5x faster.** Both A and B got all 8 right, including the verbatim `make_str` (byte-identical) and the nonexistent function (both said so plainly). Cost was a tie. B used fewer input tokens, but notebook queries are slow and cost extra turns. This is the opposite of the paper result: code is searchable by name, papers are not.
+- **The ingest digest alone is not enough to ask questions.** It lists file counts, key-file names and function names, no source. Arm D could answer nothing, and it said so honestly rather than inventing answers. That is a good failure, but the tool's output does not support question-asking as shipped. Putting the raw files in as sources (arm B) works.
+- **No hallucinations** in any arm on the nonexistent-function question.
+- **Verbatim code survived here** for a plain function. `docs/CODE-INGESTION-EXPLORATION.md` documents corruption for code containing markdown-like syntax (backticks, `<x>` placeholders), so one clean function does not clear that.
+
+Where a notebook of repos could still win, which this run does not test: far more files than an agent can grep economically, many repos at once, mixing in issues, docs and prose, and reuse across sessions. At 2 repos and ~22k lines it did not win on cost or speed.
+
+---
+
 ## Appendix: fresh research on one topic (the weaker benchmark)
 
 Task: a ~200-word briefing on *the state of quantum error correction*, 5+ cited URLs.

@@ -113,6 +113,14 @@ trial on 29 papers, not 70, correctness was not graded, and most other CLIs we t
 out of quota. Method and every caveat: [docs/BENCHMARK.md](docs/BENCHMARK.md). NotebookLM's own
 limits (sources per notebook, daily usage) still apply.
 
+### Where it fits, and where it doesn't
+
+It shines on **papers, docs and other prose** you want to question repeatedly. For **code**, we
+measured no advantage at two repos and ~22k lines: an agent using grep and file reads got
+all 8 questions right at the same cost and about 5x faster. `research_ingest_codebase`
+produces a structure digest, which on its own could not answer any of our questions;
+adding the raw source files as sources worked. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md#coding-questions-over-several-repos).
+
 ## How it works
 
 ### 1. The guard: where `nlmx` sits
