@@ -112,65 +112,60 @@ ground truth (`nlm source list`), not trusted at face value. Evidence in
 
 ## Why this is a good place to start
 
-If you are new to coding with agents, "research" is where most people start and where
-most of them burn time and money: ask an agent about a topic, and it opens ten pages,
-downloads PDFs, reads them into its own context, and summarizes. It works once, costs a
-lot, and you can't tell whether the second attempt was any better.
-
-NoteLab gives you three things a beginner usually has to learn the hard way:
+If you are new to building with agents, "research" is where most people start and where most burn time and
+money: ask an agent about a topic, and it opens a few pages, downloads PDFs, reads them into its own context and
+summarizes. It works once, costs a lot, can't show its work, and you can't tell whether the second attempt was
+any better. NoteLab gives a beginner four things that normally take months of mistakes to learn:
 
 - **A guard rail.** The agent can't quietly wreck your library with a repeated command. A refusal explains itself, so you learn what went wrong instead of debugging a silent failure.
-- **A scoreboard.** Every run gets a number you can read and compare. You build the habit of measuring a prompt instead of trusting a feeling, which is the core skill of working with agents.
+- **A scoreboard.** Every run gets a number that decomposes into five readable signals (authority, diversity, recency, depth, relevance). You build the habit of measuring a prompt instead of trusting a feeling, which is the core skill of working with agents.
+- **Learning material, not just links.** One question pulls in explainer videos, lectures, blog walkthroughs, Wikipedia and the original papers together (below), so you can ask "explain it simply" and "show me the primary source" of the same notebook.
 - **Small, readable pieces.** The engine is plain Python with no dependencies, the tests run offline, and `scripts/verify.sh` tells you in seconds whether your setup works. You can read the whole thing.
 
-## Give your agent the internet (without giving it your context window)
+## Better than just letting an agent research
 
-NotebookLM's Deep Research does the web work **on Google's side**: it searches, collects
-sources and imports them into a notebook. Your agent's model never downloads or reads them.
-NoteLab drives that loop and measures it.
+| Letting an agent research on its own | With NoteLab |
+|---|---|
+| It reads each page and PDF inside its own context, again for every follow-up | NotebookLM retrieves and indexes the sources outside the agent; follow-ups are questions to the notebook and return cited answers |
+| "Which sources are good?" is the model's opinion, different every time | A deterministic scorer runs locally over the source list: **zero model tokens**, same input gives the same score, and every number shows its parts |
+| A prompt is "better" because it felt better | Prompts are A/B-tested on measured source quality, the winner is stored in a ledger and replayed next time |
+| Duplicates and stale sources pile up unnoticed | `research_evolve_notebook` plans create / merge / skip / evict, dry run first |
+| A repeated import silently doubles your sources | `nlmx` refuses it, with a reason |
+| Prior work is forgotten next session | Experiments, winners, per-topic strategy and every indexed code version are stored locally and stay queryable |
 
-```
-You → agent → research_run_experiment("your question", strategies)
-              └─ for each strategy, via nlmx:  research run → web search → sources imported into a notebook
-              └─ NoteLab scores each source set locally (no model call)
-              └─ agent receives: winner, margin, per-signal scores, notebook ids
-You → agent → "answer from the winning notebook" → one grounded, cited answer
-```
+There is no token-savings percentage here, on purpose: the saving is structural (the agent doesn't ingest the
+documents), and it depends on your agent and how many sources you have. Run the same question both ways and
+compare your own usage.
 
-To use it:
+## What it finds: from explainer videos to research papers
 
-1. Install and log in to `nlm` ([Go live](#go-live-real-notebooklm-research)). That login is the only internet credential involved, and it stays with `nlm`.
-2. Install the skills (`scripts/install-skills.sh claude --with-guard`) so the agent knows the loop and the rules.
-3. Ask in plain language, for example: *"Use the research-loop skill. Compare a broad prompt and an authoritative-sources prompt on 'current treatment guidelines for X', and tell me which found better sources."*
-4. Read the `winner` and the per-signal scores, open the best sources yourself, and ask follow-ups against that notebook.
+Deep Research doesn't just return links to the same kind of page. For the question *"how transformers attention
+works: explainer videos, lectures, blog posts and the original papers"*, **one fast run** (about 100 seconds)
+returned this mix, which we then scored with `research_score_notebook`:
 
-### Why it saves tokens
+| Kind | What came back |
+|---|---|
+| 🎬 Video lectures | 3Blue1Brown, "Attention in transformers, step-by-step"; MIT 6.S191 on RNNs, transformers and attention |
+| 📄 Papers and course notes | "Formal Algorithms for Transformers" (arXiv), "Neural Machine Translation by Jointly Learning to Align and Translate" (ICLR), Stanford CS224n self-attention notes |
+| ✍️ Walkthroughs | The Illustrated Transformer, Transformers from scratch, Raschka's self-attention tutorial, a scaled dot-product explainer |
+| 📚 Orientation | Wikipedia, "Attention Is All You Need" |
 
-The usual alternative is an agent that fetches 70 PDFs, pushes them through its own
-context, and summarizes them, again for every follow-up question. NoteLab avoids that in
-three places:
+NoteLab scored that set **0.79 overall, with 0.89 diversity** (10 sources across 10 domains). The scorer
+gives arXiv and Wikipedia high authority (0.95), and treats video domains and personal blogs as neutral (0.5)
+rather than pretending to rank them. Videos still earn their place through relevance and diversity.
 
-| Step | The usual way | With NoteLab |
-|---|---|---|
-| Finding and reading sources | The agent downloads and reads each document in its own context | NotebookLM retrieves and indexes them outside the agent |
-| Judging which sources are good | The model reads them and gives an opinion | A deterministic scorer run locally over the source list (domain, date, length, term overlap): **zero model tokens**, same input gives the same score |
-| Follow-up questions | Re-read or re-summarize the documents | Ask the notebook; the agent receives a cited answer, not the documents |
-| Trying the same topic again | Start from scratch | `research_suggest_prompt` replays the stored winner |
-
-Measured, once: with the same 29 papers and 5 specific questions, Claude's CLI cost
-**$0.57 reading the PDFs itself** (43 turns, ~659k input tokens) versus **$0.25 asking a
-NotebookLM notebook through NoteLab** (8 turns, ~191k), and the notebook route is slower
-(247 s vs 106 s). The PDF reader also only read page one of each paper. This is a single
-trial on 29 papers, not 70, correctness was not graded, and most other CLIs we tried were
-out of quota. Method and every caveat: [docs/BENCHMARK.md](docs/BENCHMARK.md). NotebookLM's own
-limits (sources per notebook, daily usage) still apply.
+**A real catch we found while testing this, and fixed.** Deep Research imports a YouTube link as an
+ordinary web page, and for our two videos that page was a *"Sign in to confirm you're not a bot"* wall, not the
+transcript: the notebook looked full and knew nothing about the video. Adding the same video natively
+(`nlm source add --youtube`) fetched the real transcript (about 28,000 characters), and the notebook then answered
+detailed questions from it. `research_fix_videos(notebook_id)` automates the repair: it lists every YouTube source,
+flags blocked copies, and with `apply=true` re-adds them natively. It only adds sources; deleting the blocked
+copies is a separate `remove_junk=true` you must ask for. Run it after any research import that touched videos.
 
 ### Where it fits, and where it doesn't
 
-- **Papers, docs, prose you will question repeatedly:** the notebook route. Measured above.
-- **Code:** a plain agent with grep already answers code questions well. We measured a tie on
-  correctness and cost at two repos (~22k lines), with grep about 5x faster. So for code, NoteLab
-  adds three things grep does not, and does not claim to beat it on speed:
+- **Papers, docs, videos and prose you will question repeatedly:** the notebook route.
+- **Code:** a grep-capable agent already answers small code questions well, so for a quick look at one small repo, use grep. NoteLab adds what grep doesn't:
   1. **Exact, targeted lookups you can trust**: `code_find` returns the real source with
      `repo@version/path:line` for *where is X defined*, *who calls X* (AST-accurate in Python),
      *what subclasses X* and ranked text search. Indexed locally in under a second, no model tokens.
@@ -181,8 +176,8 @@ limits (sources per notebook, daily usage) still apply.
   3. **Many repos in one place**, plus an optional notebook (`research_ingest_codebase(mode="files")`)
      for conceptual, cross-document questions that grep can't answer.
 
-  `research_ingest_codebase`'s default `digest` mode holds no source, so on its own it answered 0 of 8
-  questions; use `mode="files"`. Numbers and caveats: [docs/BENCHMARK.md](docs/BENCHMARK.md#coding-questions-over-several-repos).
+  `research_ingest_codebase`'s default `digest` mode holds only a structure summary, not source; use `mode="files"`
+  when you want the notebook to answer detail questions.
 
 ## How it works
 
@@ -344,38 +339,33 @@ scripts/install-skills.sh claude --with-guard
 scripts/verify.sh                    # now also confirms nlm is on PATH
 ```
 
-## Reliability and security
+## Evaluations
 
-**Tests.** Offline, no account needed: 344 pass, 2 optional live tests skip without keys.
-CI runs on Python 3.10, 3.12 and 3.13. `scripts/verify.sh` is the same checklist on your machine.
+Claims here are backed by checks you can rerun. Full detail and commands: [docs/EVALUATIONS.md](docs/EVALUATIONS.md).
 
-**Live proof.** Unit tests prove the guard logic. The eval harness proves a real agent
-reasoning for itself gets stopped. Every scenario is read-only: `nlmx` refuses before `nlm` is called.
-Latest sweep (2026-10-07):
-
-| runner | `--source-ids` refusal | `chat start` refusal | missing-notebook fail-fast |
-|---|---|---|---|
-| opencode | ✅ | ✅ | ✅ |
-| claude | ✅ | ✅ | ✅ |
-
-6/6 across two model families. Only substantive refusal markers count, so a bare command
-echo doesn't pass. Runs that can't produce a signal (quota, usage limit, no shell) are
-reported as environment errors, never as passes or failures.
+| What is checked | How | Result |
+|---|---|---|
+| The guard stops a **real agent**, not just a unit test | Live agents from two model families are pointed at read-only scenarios (`--source-ids`, `chat start`, missing notebook). `nlmx` refuses before `nlm` is called. | **6 / 6** (opencode 3/3, claude 3/3), sweep of 2026-10-07 |
+| Honest scoring | Only substantive refusal markers count; runs that couldn't produce a signal (quota, usage limit, no shell) are reported as environment errors, never as passes or failures | by construction |
+| Skills improve only when they **measurably** win | Champion vs challenger on a fixed battery, gated on margin over a bootstrapped noise floor, a cost rule, no held-out regression, and a green tree | The recorded duels **held** (challenger tied the champion, so no promotion): the gate refuses unearned wins |
+| Research strategies improving or regressing | OLS-slope trend with the raw series (`research_eval_skill`) | Demo: `improving, +0.081/run` |
+| Source scoring is auditable | Every composite decomposes into its five signals; weights are config | See any `research_score_notebook` output |
+| Code index is exact and versioned | Tests for verbatim source, AST callers and subclasses, text search, kept versions, diffs, non-Python symbols | In the offline suite |
+| Video repair works on real notebooks | Live: blocked YouTube copies detected, native copies added, a lecture answered from its transcript | Checked on a real notebook (see above) |
+| The whole package | 348 offline tests pass, 2 optional live tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
 
 **Design choices that limit blast radius**
 
-- Source eviction is a plan; applying it is confirm-gated. No silent delete path exists.
+- Source eviction is a plan; applying it is confirm-gated. No silent delete path exists, and `research_fix_videos` never deletes unless asked.
 - Scores decompose into their five signals. No black-box verdict.
 - The engine imports only the standard library, so there is no dependency supply chain to audit.
 - Skill duels reject challengers that contain suite secrets *before* any spend.
 
-**What it does not do.** `nlmx` guards the four behaviours above, not all of NotebookLM.
-Anything else passes straight through to `nlm`. Source-quality scores say nothing about
-whether an answer is correct. It does not handle your Google credentials: `nlm` does.
+**What it does not do.** `nlmx` guards the four behaviours above, not all of NotebookLM; anything else passes
+straight through to `nlm`. Source-quality scores say nothing about whether an answer is correct. It does not
+handle your Google credentials: `nlm` does. Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
-Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
-
-## MCP tools (18)
+## MCP tools (19)
 
 <details><summary>Full tool table</summary>
 
@@ -397,6 +387,7 @@ Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 | `research_ingest_codebase(repo, notebook_id?, title?, max_files?, mode?, max_sources?)` | Add a repo to a notebook: `digest` (structure summary, default) or `files` (the real source, bundled) |
 | `code_index(repo, name?, version?)` | Index a repo locally as a kept, versioned snapshot (default label: git commit) |
 | `code_find(query, kind?, repo?, version?, limit?)` | Exact, instant lookup: `def` (with source), `callers`, `subclasses`, `text`, `any` |
+| `research_fix_videos(notebook_id, apply?, remove_junk?)` | Repair YouTube sources imported as bot-wall pages: plan, or re-add them natively so the real transcript is used |
 | `code_versions(repo?)` | List every kept version |
 | `code_diff(repo, old, new)` | Files and functions added / removed / changed between two versions |
 
@@ -428,7 +419,7 @@ Source-quality weights are config, not code: pass a preset (`news`, `lit_review`
 
 [DESIGN](docs/DESIGN.md) architecture and quality model · [NLMX](docs/NLMX.md) the guard and its evidence ·
 [CONFIG](docs/CONFIG.md) weights · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
-[BENCHMARK](docs/BENCHMARK.md) reading papers vs asking a notebook · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
+[EVALUATIONS](docs/EVALUATIONS.md) what is checked and how to rerun it · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
 
 ## Contributing
 

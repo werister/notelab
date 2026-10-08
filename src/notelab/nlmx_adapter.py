@@ -120,6 +120,12 @@ class NlmxAdapter:
         ok = r.returncode == 0
         return ok, (r.stdout.strip() or r.stderr.strip() or ("added" if ok else "failed"))
 
+    def add_youtube(self, notebook_id: str, url: str) -> tuple[bool, str]:
+        """Add a YouTube video natively (NotebookLM fetches the real transcript). Returns (ok, message)."""
+        r = self._run(["source", "add", notebook_id, "--youtube", url], timeout=300)
+        ok = r.returncode == 0
+        return ok, (r.stdout.strip() or r.stderr.strip() or ("added" if ok else "failed"))
+
     def remove_source(self, notebook_id: str, source_id: str) -> tuple[bool, str]:
         """Remove one source from a notebook. Returns (ok, message). Destructive — only
         called by the plan executor when the caller has explicitly confirmed. Passes

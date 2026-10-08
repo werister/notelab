@@ -187,6 +187,46 @@ class ToolLogic:
             "notebook_id": nb, "added": ok, "message": msg,
         }, indent=2)
 
+    _BLOCKED = ("not a bot", "sign in to confirm", "unusual traffic", "enable javascript")
+
+    def fix_videos(self, notebook_id: str, apply: bool = False, remove_junk: bool = False) -> str:
+        """Repair video sources. Deep Research imports YouTube links as web pages, and we
+        observed those copies hold a 'Sign in to confirm you're not a bot' wall instead of the
+        transcript, while a native `source add --youtube` copy holds the real transcript.
+        Plan (default): list every youtube.com / youtu.be source, flag blocked copies, and say
+        which already have a native copy. apply=true adds the missing native copies (additive,
+        safe). remove_junk=true (needs apply) also deletes the blocked copies, a destructive step."""
+        import re
+        try:
+            sources = self.adapter.list_sources(notebook_id)
+        except NlmxError as e:
+            return json.dumps({"error": str(e)}, indent=2)
+        key = lambda t: " ".join(t.lower().split())[:40]  # titles get truncated differently per copy
+        native_titles = {key(s.title) for s in sources if not s.url}
+        rows = []
+        for s in sources:
+            if not re.search(r"(?:youtube\.com|youtu\.be)/", s.url or ""):
+                continue
+            text = (s.content or self.adapter.source_content(s.id)).lower()
+            blocked = any(m in text for m in self._BLOCKED)
+            has_native = key(s.title) in native_titles
+            action = ("already_native" if has_native else "add_native") if blocked else "ok"
+            rows.append({"source_id": s.id, "title": s.title, "url": s.url,
+                         "blocked_page": blocked, "has_native_copy": has_native, "action": action})
+        results = []
+        if apply:
+            for r in rows:
+                if r["action"] == "add_native":
+                    ok, msg = self.adapter.add_youtube(notebook_id, r["url"].split("&")[0])
+                    results.append({"url": r["url"], "added": ok, "message": msg})
+                if remove_junk and r["blocked_page"] and (r["has_native_copy"] or any(
+                        x["url"] == r["url"] and x["added"] for x in results)):
+                    ok, msg = self.adapter.remove_source(notebook_id, r["source_id"])
+                    results.append({"source_id": r["source_id"], "removed": ok, "message": msg})
+        return json.dumps({"notebook_id": notebook_id, "videos": len(rows),
+                           "blocked": sum(r["blocked_page"] for r in rows), "plan": rows,
+                           "applied": results if apply else None}, indent=2)
+
     def _code_index(self):
         from .codeindex import CodeIndex
         return CodeIndex(Path(self.store.path).with_name("code.db"))
@@ -390,6 +430,9 @@ _SCHEMAS: dict[str, dict] = {
                        "title": {"type": "string"}, "max_files": {"type": "integer"},
                        "mode": {"type": "string", "enum": ["digest", "files"]},
                        "max_sources": {"type": "integer"}}},
+    "research_fix_videos": {"type": "object", "required": ["notebook_id"],
+        "properties": {"notebook_id": {"type": "string"}, "apply": {"type": "boolean"},
+                       "remove_junk": {"type": "boolean"}}},
     "code_index": {"type": "object", "required": ["repo"],
         "properties": {"repo": {"type": "string"}, "name": {"type": "string"},
                        "version": {"type": "string"}, "max_files": {"type": "integer"}}},
@@ -442,6 +485,9 @@ _DESCRIPTIONS: dict[str, str] = {
         "source files so the notebook can answer detail questions.",
     "code_index": "Index a repo (local path or GitHub URL) locally for exact, zero-token code "
         "search. Run once per repo; re-run to refresh.",
+    "research_fix_videos": "Repair video sources: Deep Research imports YouTube links as web pages "
+        "that can hold a bot-wall instead of the transcript. Plans (default) or re-adds them natively "
+        "so NotebookLM fetches the real transcript; deleting the blocked copies needs remove_junk=true.",
     "code_versions": "List every kept version of indexed repos: nothing is forgotten.",
     "code_diff": "What changed between two indexed versions of a repo: files and functions "
         "added, removed and changed.",
@@ -475,6 +521,7 @@ _BINDINGS = {
     "research_run_experiment": "run_experiment",
     "research_score_notebook": "score_notebook",
     "research_ingest_codebase": "ingest_codebase",
+    "research_fix_videos": "fix_videos",
     "code_index": "code_index",
     "code_find": "code_find",
     "code_versions": "code_versions",
@@ -494,7 +541,7 @@ _BINDINGS = {
 
 
 def build_stdio_server(logic: ToolLogic | None = None) -> StdioMCPServer:
-    """Build the bundled stdlib-only MCP server with all 18 tools registered."""
+    """Build the bundled stdlib-only MCP server with all 19 tools registered."""
     logic = logic or ToolLogic()
     srv = StdioMCPServer("notelab")
     for public_name, method_name in _BINDINGS.items():

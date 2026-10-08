@@ -31,6 +31,6 @@ Add `--version V` (or `'*'` for all) to ask about an older snapshot; the default
 - **Quote, don't reconstruct.** Return the indexed source verbatim with its `path:line`. If `find` says "no matches", say the symbol was not found; do not answer from memory.
 - **Pick the right tool for the question.**
   - Exact/targeted (definition, callers, subclasses, diff): this index.
-  - Small repo you can grep: grep is just as good (we measured a tie), use whichever is handier.
+  - Small repo you can grep: grep is just as good, use whichever is handier.
   - Conceptual / cross-document / prose-heavy ("how does the design hang together", papers + issues + docs): ingest with `research_ingest_codebase(repo, mode="files")` and ask the notebook.
 - **`research_ingest_codebase` default mode is a structure digest with no source.** It cannot answer detail questions. Use `mode="files"` for a notebook that can.

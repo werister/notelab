@@ -42,6 +42,7 @@ strategy improving over time?), `research_history` (past experiments),
 - **Evolve is dry-run-first, always.** Quote the plan, then ask before `apply=true`.
 - **Guard work goes through `nlmx`, never bare `nlm`.** If a command refuses,
   report the refusal verbatim — do not retry around it.
+- **Check videos after importing.** Deep Research imports YouTube links as web pages that can be a bot wall, not a transcript. If a notebook has YouTube sources, run `research_fix_videos(notebook_id)` (plan first, `apply=true` only adds native copies; never pass `remove_junk` without asking).
 - **Record, don't remember.** Wins live in `research_history` and the ledger,
   not in your context. Query them.
 

@@ -16,11 +16,15 @@
   text search; every indexed version is kept (content-deduplicated) and diffable.
 - `research_ingest_codebase(mode="files")`: ingest the real source files (bundled, with path headers)
   instead of only a structure digest. Default stays `digest`.
-- `code-questions` skill; `scripts/bench_code.py` and `scripts/bench_corpus.py`.
+- `code-questions` skill.
+- `research_fix_videos`: Deep Research imports YouTube links as web pages that can hold a bot wall instead of the
+  transcript; this plans or re-adds them natively (`--youtube`) so the real transcript is used. Never deletes unless
+  `remove_junk=true`.
+- `docs/EVALUATIONS.md`: what is checked, how to rerun it, and the limits.
 
 ### Changed
 - README rewritten: observed-failure table, three diagrams, per-agent install, try-it prompts.
-- Test suite: 344 passed, 2 optional live tests skipped.
+- Test suite: 348 passed, 2 optional live tests skipped.
 
 ### Fixed
 - `brag-output/work/render.py` no longer hardcodes a local path.
