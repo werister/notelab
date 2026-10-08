@@ -21,8 +21,5 @@ uv.lock
 # agent session memory (opencode/serena), never commit
 .serena/
 
-# render intermediates for brag-output (the final media is committed)
-brag-output/work/*.wav
-brag-output/work/*.png
-brag-output/work/silent.mp4
-brag-output/work/stills/
+# internal review artifacts (not shipped)
+semantic-review/

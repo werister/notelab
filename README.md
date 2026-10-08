@@ -7,10 +7,6 @@
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/engine-stdlib--only-informational)
 
-![NoteLab in 23 seconds: the guard says no, the loop learns, every code version queryable, tests green, live agent evals 6/6](brag-output/demo.gif)
-
-*23 seconds, every frame real output. [Full video with sound](brag-output/brag.mp4).*
-
 Most "NotebookLM MCP" tools are a remote control: create notebook, add source, query. NoteLab is the
 layer *above* it — it judges whether the sources are any good, and helps your agent act on them.
 

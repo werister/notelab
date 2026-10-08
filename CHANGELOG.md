@@ -52,6 +52,9 @@
 ### Removed
 - `docs/superpowers/` dev-planning artifacts (contained personal local paths and references to
   a private sibling project).
+- `brag-output/` marketing media (1.4 MB: brag.mp4/jpg, demo.gif, render scaffolding) — a third
+  of the repo weight. The README no longer embeds a gif/video; the text `scripts/verify.sh`
+  checklist is the at-a-glance proof instead.
 
 ### Added (earlier in this cycle)
 - **Skills** — `research-loop` and `skill-evolution` alongside `nlm-skill`; champion/challenger
