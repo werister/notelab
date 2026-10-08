@@ -70,6 +70,28 @@ _REFERENCE_DOMAINS = {"wikipedia.org", "wikibooks.org", "wiktionary.org"}
 # ideally spans. "reference" and "web" are the neutral fallbacks.
 SOURCE_TYPES = ("paper", "docs", "repo", "video", "discussion", "reference", "web")
 
+# Markers of a "bot-wall" / sign-in shell — e.g. a YouTube link that NotebookLM's
+# Deep Research imported as an ordinary web page and got a "Sign in to confirm you're
+# not a bot" screen instead of the transcript. Verified against real live imports: the
+# shell is dominated by navigation chrome and contains no substantive content. Such a
+# source should not earn full depth or count as genuine kind-diversity.
+_BLOCKED_MARKERS = (
+    "sign in to confirm", "skip navigation", "search with your voice",
+    "confirm you're not a bot", "accounts.google.com/servicelogin",
+    "enable javascript", "please enable cookies",
+)
+
+
+def is_blocked_content(content: str) -> bool:
+    """True if `content` looks like a sign-in / bot-wall shell rather than real
+    substance. Heuristic and deterministic: fires when several nav-chrome markers are
+    present (a single incidental mention isn't enough)."""
+    if not content:
+        return False
+    low = content.lower()
+    hits = sum(1 for m in _BLOCKED_MARKERS if m in low)
+    return hits >= 2
+
 
 def classify_source_type(url: str, title: str = "") -> str:
     """Classify a source into one of SOURCE_TYPES from its URL (and title as a hint).
@@ -154,6 +176,12 @@ class SourceFeatures:
         explicit `source_type` if set, else classifies from url/title."""
         return self.source_type or classify_source_type(self.url, self.title)
 
+    @property
+    def is_blocked(self) -> bool:
+        """True if this source's content looks like a sign-in / bot-wall shell
+        (e.g. a YouTube link imported as a page) rather than real substance."""
+        return is_blocked_content(self.content)
+
 
 @dataclass
 class QualityWeights:
@@ -227,6 +255,12 @@ def depth_score(s: SourceFeatures, weights: QualityWeights) -> float:
     n = len(s.content or "")
     if n == 0:
         return 0.4  # unknown length (not fetched) — neutral-ish, don't over-reward thin
+    # A bot-wall / sign-in shell can be long (tens of KB of nav chrome) but holds no
+    # substance — don't let its length earn depth. Verified live: a blocked YouTube
+    # import was 21k of navigation junk, a real transcript 144k; both would otherwise
+    # score depth 1.0.
+    if s.is_blocked:
+        return 0.1
     # saturating curve: hits ~1.0 near depth_target_chars, never exceeds 1.
     return min(1.0, math.log1p(n) / math.log1p(weights.depth_target_chars))
 
@@ -281,7 +315,10 @@ def type_diversity_score(sources: list[SourceFeatures]) -> float:
     hostnames. One source scores 0."""
     if len(sources) <= 1:
         return 0.0
-    kinds = {s.kind for s in sources}
+    # a blocked bot-wall shell doesn't contribute real variety — a "video" that's just
+    # a sign-in page isn't a video source in any useful sense, so exclude blocked ones
+    # from the kind set (verified live: Deep Research imports videos as blocked pages).
+    kinds = {s.kind for s in sources if not s.is_blocked}
     # the richest meaningfully-distinct palette we reward spanning (exclude the two
     # neutral fallbacks from the denominator so hitting them doesn't look like variety).
     rich_kinds = {k for k in kinds if k not in ("web",)}
@@ -315,13 +352,17 @@ class SourceScore:
     recency: float
     relevance: float
     kind: str = "web"
+    blocked: bool = False
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id, "domain": self.domain, "kind": self.kind,
             "authority": round(self.authority, 4), "depth": round(self.depth, 4),
             "recency": round(self.recency, 4), "relevance": round(self.relevance, 4),
         }
+        if self.blocked:
+            d["blocked"] = True
+        return d
 
 
 @dataclass
@@ -369,6 +410,7 @@ def score_sources(
             recency=recency_score(s, w),
             relevance=relevance_score(s, qterms, w.term_expansions),
             kind=s.kind,
+            blocked=s.is_blocked,
         ))
 
     n = len(per_source)

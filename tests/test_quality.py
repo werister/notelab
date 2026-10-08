@@ -124,6 +124,39 @@ def test_classify_source_type_covers_the_core_kinds():
     assert s.kind == "paper"
 
 
+def test_blocked_botwall_video_scores_low_depth_and_loses_kind_credit():
+    """A YouTube link imported as a 'Sign in to confirm you're not a bot' shell (seen
+    live from NotebookLM Deep Research) is long but empty. It must NOT earn full depth,
+    and must not count as a real 'video' kind for type-diversity — otherwise a notebook
+    full of blocked videos looks deep and diverse while holding nothing."""
+    from notelab.research.quality import (
+        is_blocked_content, depth_score, type_diversity_score, QualityWeights,
+    )
+    botwall_text = ("Sign in Skip navigation Search with your voice "
+                    "Sign in to confirm you're not a bot " * 300)
+    blocked = _src(url="https://www.youtube.com/watch?v=x", title="RAG course - YouTube",
+                   content=botwall_text)
+    real = _src(url="https://www.youtube.com/watch?v=y", title="RAG course - YouTube",
+                content="in this course we build retrieval augmented generation " * 300)
+    assert is_blocked_content(botwall_text) is True
+    assert blocked.is_blocked is True and real.is_blocked is False
+    # blocked video gets floored depth, real transcript gets full depth
+    assert depth_score(blocked, QualityWeights()) <= 0.15
+    assert depth_score(real, QualityWeights()) > 0.9
+    # a blocked video + a paper spans only ONE real kind (paper); the blocked video
+    # doesn't add 'video' variety.
+    paper = _src(url="https://arxiv.org/abs/1")
+    assert type_diversity_score([blocked, paper]) < type_diversity_score([real, paper])
+
+
+def test_is_blocked_content_needs_multiple_markers():
+    """A single incidental mention of 'sign in' in real content must not trip the
+    blocked heuristic — it requires several nav-chrome markers together."""
+    from notelab.research.quality import is_blocked_content
+    assert is_blocked_content("You can sign in to the app to save your work.") is False
+    assert is_blocked_content("") is False
+
+
 def test_video_and_discussion_not_penalized_on_authority():
     """A YouTube walkthrough and a Q&A/discussion host should sit at the neutral 0.5
     authority baseline, not be dragged to low-authority territory — authority is the
