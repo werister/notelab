@@ -105,11 +105,12 @@ three places:
 | Follow-up questions | Re-read or re-summarize the documents | Ask the notebook; the agent receives a cited answer, not the documents |
 | Trying the same topic again | Start from scratch | `research_suggest_prompt` replays the stored winner |
 
-Measured, once: on one task with Claude's CLI, the NoteLab arm took 3 model turns instead
-of 12, about 54% fewer output tokens, and cost about 32% less ($0.18 vs $0.26), but ran
-slower (126 s vs 59 s) because NotebookLM's research step takes time. That is a single
-trial on about 10 sources, not 70 PDFs, and most other CLIs we tried were out of quota.
-Method, table and every caveat: [docs/BENCHMARK.md](docs/BENCHMARK.md). NotebookLM's own
+Measured, once: with the same 29 papers and 5 specific questions, Claude's CLI cost
+**$0.57 reading the PDFs itself** (43 turns, ~659k input tokens) versus **$0.25 asking a
+NotebookLM notebook through NoteLab** (8 turns, ~191k), and the notebook route is slower
+(247 s vs 106 s). The PDF reader also only read page one of each paper. This is a single
+trial on 29 papers, not 70, correctness was not graded, and most other CLIs we tried were
+out of quota. Method and every caveat: [docs/BENCHMARK.md](docs/BENCHMARK.md). NotebookLM's own
 limits (sources per notebook, daily usage) still apply.
 
 ## How it works
@@ -341,7 +342,7 @@ Source-quality weights are config, not code: pass a preset (`news`, `lit_review`
 
 [DESIGN](docs/DESIGN.md) architecture and quality model · [NLMX](docs/NLMX.md) the guard and its evidence ·
 [CONFIG](docs/CONFIG.md) weights · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
-[BENCHMARK](docs/BENCHMARK.md) single-trial cost comparison · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
+[BENCHMARK](docs/BENCHMARK.md) reading papers vs asking a notebook · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
 
 ## Contributing
 
