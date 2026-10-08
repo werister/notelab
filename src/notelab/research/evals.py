@@ -112,13 +112,14 @@ def detect_runners(candidates: list[RunnerSpec] | None = None) -> list[RunnerSpe
 
 def detect_runners_with_reliability(
     candidates: list[RunnerSpec] | None = None,
-    mml_ledger_path=None,
+    ledger_path=None,
 ) -> list[RunnerSpec]:
-    """detect_runners() + cross-repo reliability filtering. Opt-in: callers that want
-    the old PATH-only behavior keep calling detect_runners() directly."""
-    from .reliability import DEFAULT_MML_LEDGER, filter_known_unreliable
+    """detect_runners() + external reliability-ledger filtering. Opt-in: callers that
+    want the old PATH-only behavior keep calling detect_runners() directly. With no
+    ledger configured (the default), this returns the same result as detect_runners()."""
+    from .reliability import filter_known_unreliable
     specs = detect_runners(candidates)
-    return filter_known_unreliable(specs, mml_ledger_path or DEFAULT_MML_LEDGER)
+    return filter_known_unreliable(specs, ledger_path)
 
 
 @dataclass

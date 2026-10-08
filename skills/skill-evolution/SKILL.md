@@ -24,8 +24,9 @@ variant -> eval battery -> score -> gate -> promote/archive -> repeat
    never all three).
 3. **Run both, same conditions.** `scripts/evolve.py --battery <file>
    --challenger <v>` runs champion + challenger through every task. Live tasks
-   need real runners ([redacted-private-project] model families via notelab's `run_adversary`
-   roster); the `suite` task always runs as the regression gate. Before any
+   need real runners (the installed agent-CLI families via notelab's
+   `run_adversary` roster); the `suite` task always runs as the regression
+   gate. Before any
    spend, a critic screen rejects challengers whose text contains suite
    secrets (battery `critic_patterns`) — leakage never gets a measurement.
 4. **Gate, don't vibe.** Promote iff ALL hold (see
@@ -83,12 +84,13 @@ scaffolded scenarios to express the hypothesis, then run the command.
 - **One duel at a time per battery.** Parallel challengers race each other
   into noise; queue them.
 
-## The [redacted-private-project] role
+## Runners and judges
 
-notelab owns the battery + gate; [redacted-private-project] owns the *runners and judges*:
-multi-family agent CLIs execute live tasks, and swarm races/councils propose
-challenger variants. Ledger note: record each duel as a notelab experiment
-(arms = champion/challenger) so `research_history` shows the skill's lineage.
+notelab owns the battery + gate; the *runners and judges* come from whatever
+agent CLIs you have installed: multi-family agent CLIs execute live tasks, and
+(optionally) an external orchestrator can propose challenger variants. Ledger
+note: record each duel as a notelab experiment (arms = champion/challenger) so
+`research_history` shows the skill's lineage.
 
 ## References
 

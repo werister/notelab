@@ -262,7 +262,10 @@ def test_ols_slope_needs_two_points():
     assert _ols_slope([0.0, 1.0]) == 1.0
 
 
-def test_detect_runners_with_reliability_uses_default_ledger(monkeypatch):
+def test_detect_runners_with_reliability_defers_ledger_resolution_to_filter(monkeypatch):
+    """With no explicit ledger_path, detect_runners_with_reliability() passes None
+    straight through to the filter, which resolves the env default (or no-ops) itself
+    -- the wrapper doesn't hardcode a ledger location."""
     import notelab.research.evals as E
     from notelab.research import reliability as R
     seen = {}
@@ -273,7 +276,7 @@ def test_detect_runners_with_reliability_uses_default_ledger(monkeypatch):
 
     monkeypatch.setattr(R, "filter_known_unreliable", fake_filter)
     out = E.detect_runners_with_reliability()
-    assert seen["ledger"] == R.DEFAULT_MML_LEDGER
+    assert seen["ledger"] is None
     assert {"opencode", "claude"} <= {r.name for r in out}
 
 

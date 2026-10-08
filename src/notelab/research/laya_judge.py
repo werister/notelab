@@ -90,12 +90,11 @@ def judge_redundancy(source, remaining: list, question: str) -> RedundancyJudgme
     specific"; generic keyword-restatement filler scored ~0.6 "vague" — same
     checkpoint, same fixture, only the question shape changed).
 
-    Availability is checked inside _get_agent(), not here — a duplicate check at
-    this level defeated offline test mocking (found live in CI: tests patch
-    _get_agent directly to inject a fake agent, but a redundant laya_available()
-    check here ran first regardless of that mock and raised anyway, since
-    laya-mlx genuinely isn't installed in CI — this bug was invisible in local
-    dev because laya-mlx happened to be installed there the whole session)."""
+    Availability is checked inside _get_agent(), not here. A duplicate check at
+    this level breaks offline test mocking: tests patch _get_agent directly to
+    inject a fake agent, but a redundant laya_available() check here would run
+    first regardless of that patch and raise whenever laya-mlx isn't installed
+    (as it isn't in CI), defeating the mock."""
     agent = _get_agent()
 
     state = {

@@ -242,7 +242,7 @@ document hold up under a fresh, uninstructed read, not just self-assessment.
 
 ### 12. Back-to-back `nlmx research run` on the same notebook silently duplicates the FIRST
 query's sources instead of running the SECOND — NOT FIXED
-Hit live while seeding a fresh notebook for `[redacted-private-project]` research (2026-09-24): ran
+Hit live while seeding a fresh research notebook (2026-09-24): ran
 `nlmx research run "<query 1>" --notebook-id <nb> --mode deep --source web`, which completed
 normally and imported 65 new sources (21 → 86). Immediately ran a **second**
 `nlmx research run "<query 2>" --notebook-id <nb> --mode deep --source web` against the **same**

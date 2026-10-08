@@ -95,8 +95,7 @@ class Experiment:
             "margin_over_runner_up": margin,
             # the WINNING arm's fast verdict, not an experiment-wide judgment — every
             # arm has its own "assessment" in "arms"; this key is named accordingly
-            # so callers can't mistake it for an aggregate (sparring review caught
-            # the ambiguity of a bare "assessment" key here).
+            # so callers can't mistake it for an experiment-wide aggregate.
             "winner_assessment": win.assessment if win else None,
             "ranking": [
                 {"name": a.strategy.name,
@@ -130,8 +129,7 @@ def run_ab(
             # as `report` above, even on a soft (meta["error"]) failure: an empty
             # source list is itself informative ("thin"), not nothing. Isolated in
             # its own try so a bug in the assessment engine can't masquerade as the
-            # RUNNER having failed and discard an otherwise-good arm (sparring
-            # review caught this coupling).
+            # RUNNER having failed and discard an otherwise-good arm.
             try:
                 assessment = quick_assess(sources, question, weights=w, mode="fast")
             except Exception as e:  # pragma: no cover - defensive, see docstring above

@@ -1,8 +1,8 @@
 """spar() must dispatch each family through its OWN CLI (run_adversary), not the
 shared NotebookLM path -- fixes FIELD-NOTES.md gap #9. Offline: spar() resolves its
-runners via detect_runners_with_reliability() (PATH detection + the cross-repo
+runners via detect_runners_with_reliability() (PATH detection + the external
 reliability filter), and run_adversary, both monkeypatched here, no real CLI, no
-real [redacted-private-project] ledger, no NotebookLM call."""
+real reliability ledger, no NotebookLM call."""
 import json
 
 import notelab._tools as tools_mod
@@ -69,14 +69,14 @@ def test_spar_records_unavailable_family_without_calling_run_adversary(monkeypat
 
 
 def test_spar_surfaces_reliability_skip_reason_not_generic_not_installed(monkeypatch):
-    """A family that IS on PATH but was excluded by the cross-repo reliability filter
+    """A family that IS on PATH but was excluded by the external reliability filter
     (detect_runners_with_reliability marks it available=False with a skipped_reason,
-    e.g. quota exhaustion reported in [redacted-private-project]'s ledger) must surface THAT reason in
-    spar()'s output, not the generic 'not installed' text -- the whole point of the
+    e.g. quota exhaustion reported in the reliability ledger) must surface THAT reason
+    in spar()'s output, not the generic 'not installed' text -- the whole point of the
     reliability filter is to tell the caller WHY a family was skipped."""
     specs = [RunnerSpec("codex", "codex", ["exec", "{prompt}"], available=False,
                         path="/usr/bin/codex", provider="codex",
-                        skipped_reason="recent quota exhaustion reported in [redacted-private-project]'s agent ledger")]
+                        skipped_reason="recent quota exhaustion reported in the reliability ledger")]
     monkeypatch.setattr(tools_mod, "detect_runners_with_reliability", lambda: specs)
 
     def fail_if_called(*a, **k):

@@ -2,16 +2,17 @@
 """One-command repro for docs/RESULTS-2026-09-23.md.
 
 Requires a working `nlmx` on PATH (or NLMX_BIN set) authenticated against
-NotebookLM. Pulls the 16 real sources this report used out of notebook
-00000000-0000-4000-8000-000000000000 by title match, fetches their real content,
-and runs the same score_sources / quick_assess(fast) / quick_assess(deep) calls
-documented in the report. Read-only — no notebook mutation.
+NotebookLM. Pulls the 16 real sources this report used out of the notebook named
+by the NOTELAB_REPRO_NOTEBOOK_ID environment variable, by title match, fetches
+their real content, and runs the same score_sources / quick_assess(fast) /
+quick_assess(deep) calls documented in the report. Read-only — no notebook mutation.
 
-    python3 scripts/repro_results_2026-09-23.py
+    NOTELAB_REPRO_NOTEBOOK_ID=<your-notebook-id> python3 scripts/repro_results_2026-09-23.py
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -19,7 +20,7 @@ sys.path.insert(0, "src")
 from notelab.research.ablation import quick_assess  # noqa: E402
 from notelab.research.quality import SourceFeatures, score_sources  # noqa: E402
 
-NOTEBOOK_ID = "00000000-0000-4000-8000-000000000000"
+NOTEBOOK_ID = os.environ.get("NOTELAB_REPRO_NOTEBOOK_ID", "")
 TITLE_TERMS = ("judge", "bias", "rater", "scoring", "evaluat")
 Q1 = "LLM-as-a-judge bias mitigation strategies"
 Q2 = "central tendency bias in clinical ordinal scoring by multimodal LLM raters"
@@ -33,6 +34,8 @@ def _nlmx(*args: str, timeout: int = 60) -> str:
 
 
 def main() -> None:
+    if not NOTEBOOK_ID:
+        sys.exit("set NOTELAB_REPRO_NOTEBOOK_ID to the notebook you want to reproduce from")
     listing = json.loads(_nlmx("source", "list", NOTEBOOK_ID, "--json", timeout=60))
     picked = [s for s in listing
               if any(t in (s.get("title") or "").lower() for t in TITLE_TERMS)]

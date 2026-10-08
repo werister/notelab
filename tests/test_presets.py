@@ -6,8 +6,35 @@ from notelab.research.quality import SourceFeatures
 
 
 def test_presets_exist():
-    assert set(PRESETS) >= {"news", "lit_review", "docs", "balanced"}
+    assert set(PRESETS) >= {"news", "lit_review", "docs", "balanced", "project_kickstart"}
     assert all(isinstance(w, QualityWeights) for w in PRESETS.values())
+
+
+def test_project_kickstart_preset_rewards_a_diverse_mix_of_kinds():
+    """The project_kickstart preset is the vision in one knob: a question answered by
+    a diverse mix (paper + repo + video + discussion + docs) should score clearly above
+    the same number of sources that are all one kind. The old balanced preset, which
+    leans less on kind spread, shows a smaller gap — proving the preset, not just the
+    scorer, is what favours a diverse starting library."""
+    def _mk(urls):
+        return [SourceFeatures(id=u, url=u, title="", content="starting a project step by step " * 50)
+                for u in urls]
+    diverse = _mk([
+        "https://arxiv.org/abs/1",                       # paper
+        "https://github.com/org/repo",                   # repo
+        "https://www.youtube.com/watch?v=abc",           # video
+        "https://www.reddit.com/r/x/comments/y",         # discussion
+        "https://docs.python.org/3/",                    # docs
+    ])
+    mono = _mk([f"https://blog{i}.example/post" for i in range(5)])  # all web
+    q = "how to start the project step by step"
+    kick_diverse = score_sources(diverse, q, preset("project_kickstart")).quality_score
+    kick_mono = score_sources(mono, q, preset("project_kickstart")).quality_score
+    assert kick_diverse > kick_mono
+    # the kickstart preset should separate them harder than balanced does
+    bal_diverse = score_sources(diverse, q, preset("balanced")).quality_score
+    bal_mono = score_sources(mono, q, preset("balanced")).quality_score
+    assert (kick_diverse - kick_mono) > (bal_diverse - bal_mono)
 
 
 def test_news_favors_recency_over_depth():

@@ -262,6 +262,12 @@ def test_local_long_file_truncated_to_cap(tmp_path):
 
 
 def test_local_unreadable_file_skipped(tmp_path):
+    import os
+    import pytest
+    # root bypasses POSIX file permissions, so chmod(0) doesn't make a file unreadable
+    # for the process -- the skip-on-read-error path can't be exercised as root.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("cannot test unreadable-file skip as root (root ignores chmod perms)")
     good = tmp_path / "good.py"
     good.write_text("x = 1\n")
     bad = tmp_path / "bad.py"

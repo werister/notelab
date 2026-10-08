@@ -320,8 +320,8 @@ def quick_assess(
     never calls ablate_sources at all.
 
     `mode` is case-insensitive but otherwise strict: anything besides "fast"/"deep"
-    raises rather than silently falling through to the cheap lane (sparring review
-    caught this — a typo like mode="Deep" must not silently downgrade to fast).
+    raises rather than silently falling through to the cheap lane, so a typo like
+    mode="Deep" can't silently downgrade a deep request to fast.
     """
     mode = mode.lower()
     if mode not in ("fast", "deep"):
@@ -349,8 +349,8 @@ def quick_assess(
     # fast lane
     if not qterms:
         # no question terms to check coverage against — a bare source/composite
-        # score can't honestly claim "good" or "bloated" (sparring review: an empty
-        # question was silently reporting "good" off composite/count alone).
+        # score can't honestly claim "good" or "bloated", so report "unassessable"
+        # rather than inferring a verdict from composite/count alone.
         verdict = "unassessable"
     elif gaps or rep.quality_score < 0.45:
         verdict = "thin"

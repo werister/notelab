@@ -1,7 +1,7 @@
 """Golden regression test over REAL NotebookLM data (Step 4 of the source-value
-work): 16 real sources pulled from notebook 00000000-0000-4000-8000-000000000000
-("Agent Routing and Self-Improvement Evidence Base") via `nlmx source content`,
-content truncated to the first 4000 chars per source to keep the fixture small —
+work): 16 real sources pulled from a real research notebook via `nlmx source
+content`, content truncated to the first 4000 chars per source to keep the
+fixture small —
 see docs/RESULTS-2026-09-23.md for the full-content live numbers and repro.
 
 This pins the ACTUAL measured output of the engine on real (if truncated) research
@@ -35,7 +35,13 @@ def test_golden_broad_question_composite_and_verdict():
     bug — see docs/RESULTS-2026-09-23.md."""
     sources = _load_sources()
     report = score_sources(sources, question=Q1)
-    assert round(report.quality_score, 4) == 0.6716
+    # 0.6439 (was 0.6716 before the kind-diversity signal): this corpus is a near
+    # mono-culture of papers (type_mix ~14 paper / 2 web, type_diversity 0.167), so
+    # the kind-aware diversity signal correctly scores it lower than the old
+    # domain-only diversity did — a library of one kind is less diverse by design.
+    assert round(report.quality_score, 4) == 0.6439
+    assert report.as_dict()["type_mix"] == {"paper": 14, "web": 2}
+    assert round(report.type_diversity, 4) == 0.1667
 
     fast = quick_assess(sources, Q1, mode="fast")
     assert fast["verdict"] == "bloated"

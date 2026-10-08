@@ -1,7 +1,7 @@
 """
 Backend-agnostic tool registration.
 
-One definition of the 14 tools, bound onto the bundled stdlib stdio server
+One definition of the 19 tools, bound onto the bundled stdlib stdio server
 (`mcp_stdio.StdioMCPServer`). `server.py` can additionally bind the same callables
 onto the optional official SDK, but the bundled path here needs nothing but stdlib —
 that is what lets the package "fully load" without linking any external MCP repo.
@@ -305,7 +305,7 @@ class ToolLogic:
         score_notebook/evolve_notebook), but deep mode backfills ALL sources: it
         already commits to the full O(n^2) ablation/pairwise/greedy-prune pipeline,
         so silently scoring sources 16+ as contentless would corrupt exactly the
-        thorough result the caller asked for (sparring review caught this).
+        thorough result the caller asked for.
 
         use_laya: opt-in tie-breaker for ablation's ambiguous zone (mode="deep"
         only, ignored in mode="fast" — see quick_assess). Requires laya-mlx

@@ -63,12 +63,79 @@ def test_relevance_matches_question_terms():
     assert relevance_score(off, q_terms) == 0.0
 
 
-def test_diversity_punishes_single_domain():
+def test_domain_diversity_punishes_single_domain():
+    from notelab.research.quality import domain_diversity_score
     same = [_src(url=f"https://oneblog.com/{i}") for i in range(6)]
     varied = [_src(url=f"https://site{i}.com/x") for i in range(6)]
-    assert diversity_score(same) < 0.2
-    assert diversity_score(varied) > 0.8
+    assert domain_diversity_score(same) < 0.2
+    assert domain_diversity_score(varied) > 0.8
+    assert domain_diversity_score([_src(url="https://a.com/1")]) == 0.0
+
+
+def test_blended_diversity_rewards_a_mix_of_kinds_over_many_blogs():
+    """The core NoteLab premise: a paper + repo + video + discussion is MORE diverse
+    than six blogs on six distinct domains. The default blended diversity_score (which
+    counts research-KIND spread, not just hostnames) must rank the mixed set higher,
+    even though the blog set has strictly more distinct domains."""
+    six_blogs = [_src(url=f"https://site{i}.com/x") for i in range(6)]       # all kind=web
+    mixed = [
+        _src(url="https://arxiv.org/abs/1"),                                  # paper
+        _src(url="https://github.com/org/repo"),                              # repo
+        _src(url="https://www.youtube.com/watch?v=abc"),                      # video
+        _src(url="https://www.reddit.com/r/x/comments/y"),                    # discussion
+        _src(url="https://docs.python.org/3/lib"),                            # docs
+    ]
+    assert diversity_score(mixed) > diversity_score(six_blogs)
+    # the gap is entirely the KIND signal: with kind-weighting off both sets score on
+    # domain spread alone, where the six blogs (6 domains) at least tie the mix (5),
+    # so the mix does NOT lead. Turning kind-weighting on is what flips it.
+    assert diversity_score(mixed, type_weight=0.0) <= diversity_score(six_blogs, type_weight=0.0)
     assert diversity_score([_src(url="https://a.com/1")]) == 0.0
+
+
+def test_type_diversity_signal_counts_distinct_kinds():
+    from notelab.research.quality import type_diversity_score
+    one_kind = [_src(url=f"https://blog{i}.com/x") for i in range(5)]         # all web
+    many_kinds = [
+        _src(url="https://arxiv.org/abs/1"),
+        _src(url="https://github.com/o/r"),
+        _src(url="https://youtu.be/abc"),
+        _src(url="https://news.ycombinator.com/item?id=1"),
+        _src(url="https://docs.python.org/3/"),
+    ]
+    assert type_diversity_score(one_kind) == 0.0
+    assert type_diversity_score(many_kinds) == 1.0
+
+
+def test_classify_source_type_covers_the_core_kinds():
+    from notelab.research.quality import classify_source_type
+    assert classify_source_type("https://arxiv.org/abs/2401.00001") == "paper"
+    assert classify_source_type("https://github.com/python/cpython") == "repo"
+    assert classify_source_type("https://www.youtube.com/watch?v=xyz") == "video"
+    assert classify_source_type("https://youtu.be/xyz") == "video"
+    assert classify_source_type("https://www.reddit.com/r/MachineLearning/comments/x") == "discussion"
+    assert classify_source_type("https://news.ycombinator.com/item?id=1") == "discussion"
+    assert classify_source_type("https://docs.python.org/3/library/os.html") == "docs"
+    assert classify_source_type("https://en.wikipedia.org/wiki/RAG") == "reference"
+    assert classify_source_type("https://some-random-blog.example/post") == "web"
+    # explicit override wins over URL inference
+    s = _src(url="https://github.com/o/r", title="")
+    s.source_type = "paper"
+    assert s.kind == "paper"
+
+
+def test_video_and_discussion_not_penalized_on_authority():
+    """A YouTube walkthrough and a Q&A/discussion host should sit at the neutral 0.5
+    authority baseline, not be dragged to low-authority territory — authority is the
+    wrong axis for a platform source; it earns its place via relevance and kind
+    diversity instead."""
+    from notelab.research.quality import authority_score, QualityWeights
+    w = QualityWeights()
+    video = _src(url="https://www.youtube.com/watch?v=abc")
+    quora = _src(url="https://www.quora.com/q")   # quora is in the low-authority list
+    assert authority_score(video, w) == 0.5
+    # quora classifies as discussion -> rescued to the 0.5 neutral baseline
+    assert authority_score(quora, w) == 0.5
 
 
 def test_composite_ranks_a_good_set_above_a_bad_set():

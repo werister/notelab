@@ -1,23 +1,23 @@
 """
-Cross-repo reliability filter: skip adversarial runners that [redacted-private-project]'s swarm
-dispatcher has ALREADY discovered are currently unreliable (quota-exhausted,
-consistently garbled/empty output), instead of notelab re-discovering the same
-failures live every time.
+Reliability filter: skip adversarial runners that an *external* run-ledger has
+already recorded as currently unreliable (quota-exhausted, consistently
+garbled/empty output), instead of notelab re-discovering the same failures live
+on every sparring run.
 
-Both repos are plain SQLite, no server, no shared package. This reads [redacted-private-project]'s
-`agent_notes` table directly (read-only) -- the loosest possible coupling that still
-shares real data. If [redacted-private-project]'s ledger doesn't exist (a machine without [redacted-private-project]
-checked out, or a fresh install), this is a silent no-op: notelab must work standalone.
+The ledger is any plain SQLite file with an `agent_notes` table — no server, no
+shared package, the loosest possible coupling that still shares real signal. Point
+notelab at one with the `NOTELAB_RELIABILITY_LEDGER` environment variable (or pass
+`ledger_path=`). If the file does not exist (the common case — most installs have
+no such ledger), this is a silent no-op: notelab always works standalone.
 
-NOTE on the ledger's time column: the real [redacted-private-project] ledger (verified live against
-~/.local/state/[redacted-private-project]/swarm-runs.db) stores `timestamp` as a REAL unix-epoch
-float, not a `written_at` TEXT/ISO column. Callers/tests that build their own mock
-ledger with a `written_at` TEXT column (ISO 8601) are also supported -- we detect
-whichever of the two columns the table actually has and parse accordingly, so this
-module works against both the real ledger and any ISO-based test fixture.
+Schema: the filter reads `agent` (runner name/variant), `note_text` (free text), and
+a time column. It accepts either `written_at` (TEXT, ISO 8601) or `timestamp` (REAL
+unix-epoch) and detects whichever the table actually has, so it works against an
+ISO-based ledger and an epoch-based one alike.
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -25,15 +25,19 @@ from pathlib import Path
 
 from .evals import RunnerSpec
 
-DEFAULT_MML_LEDGER = Path.home() / ".local/state/[redacted-private-project]/swarm-runs.db"
+# Default ledger location, overridable via env. Empty/unset -> no external ledger,
+# the filter is a pure no-op and notelab relies on live PATH detection alone.
+DEFAULT_RELIABILITY_LEDGER = Path(
+    os.environ.get("NOTELAB_RELIABILITY_LEDGER", "")
+) if os.environ.get("NOTELAB_RELIABILITY_LEDGER") else None
 
 # how recent a quota-exhaustion note has to be to still count -- monthly quotas reset,
 # so a note from last month says nothing about right now.
 _QUOTA_NOTE_WINDOW = timedelta(days=14)
 
-# Verified against real note text in [redacted-private-project]'s live ledger, e.g.
+# Phrases in a note that mark a provider as currently quota/usage limited, e.g.
 # "race task 'auto-pick-live-demo': quota_exhausted, 8255ms" -- "quota" alone covers
-# that phrasing; "usage limit" / "monthly limit" cover the plainer prose form.
+# that; "usage limit" / "monthly limit" cover the plainer prose form.
 _QUOTA_HINTS = re.compile(r"quota|usage limit|monthly limit", re.I)
 
 
@@ -59,17 +63,21 @@ def _time_column(conn: sqlite3.Connection) -> tuple[str, str]:
 
 def filter_known_unreliable(
     specs: list[RunnerSpec],
-    mml_ledger_path: Path | str = DEFAULT_MML_LEDGER,
+    ledger_path: Path | str | None = None,
     now_iso: str | None = None,
 ) -> list[RunnerSpec]:
     """Return specs with .available/.skipped_reason overridden to False for any
-    provider whose most recent [redacted-private-project] agent_notes entry, within the last
+    provider whose most recent `agent_notes` entry, within the last
     `_QUOTA_NOTE_WINDOW`, mentions a quota/usage-limit failure.
 
-    Never raises: a missing/unreadable ledger, or a provider with no notes at all,
-    leaves that spec's availability exactly as detect_runners() already set it.
+    Never raises: a missing/unreadable ledger, no configured ledger, or a provider
+    with no notes at all leaves that spec's availability exactly as detect_runners()
+    already set it.
     """
-    path = Path(mml_ledger_path)
+    resolved = ledger_path if ledger_path is not None else DEFAULT_RELIABILITY_LEDGER
+    if resolved is None:
+        return specs
+    path = Path(resolved)
     if not path.exists():
         return specs
     now = _parse_iso(now_iso) if now_iso else datetime.now(timezone.utc)
@@ -115,10 +123,10 @@ def filter_known_unreliable(
 
 def _spec_matches_any(spec: RunnerSpec, agents: set[str]) -> bool:
     """True if any flagged ledger agent identifies this spec: an exact match on
-    spec.name/spec.provider, or a family-prefix match ('<name>-'/'<provider>-') --
-    the real ledger records model variants (e.g. 'kilo-auto', 'cline-glm-5-3'),
-    never the bare family name, so prefix matching is required without ever
-    hardcoding specific variant ids."""
+    spec.name/spec.provider, or a family-prefix match ('<name>-'/'<provider>-').
+    Ledgers often record model variants (e.g. 'kilo-auto', 'cline-glm-5-3') rather
+    than the bare family name, so prefix matching is required without hardcoding
+    specific variant ids."""
     keys = {k for k in (spec.name, spec.provider) if k}
     for agent in agents:
         if agent in keys:
@@ -131,4 +139,4 @@ def _spec_matches_any(spec: RunnerSpec, agents: set[str]) -> bool:
 def _mark_unavailable(spec: RunnerSpec) -> RunnerSpec:
     return RunnerSpec(spec.name, spec.bin, list(spec.args_template),
                       available=False, path=spec.path, provider=spec.provider,
-                      skipped_reason="recent quota exhaustion reported in [redacted-private-project]'s agent ledger")
+                      skipped_reason="recent quota exhaustion reported in the reliability ledger")

@@ -173,7 +173,7 @@ def run_eval(
 ) -> dict:
     """Run every scenario on every available runner. `runners` may be raw
     (availability-checked here) or pre-detected; reliable_only=True filters
-    through [redacted-private-project]'s cross-repo reliability ledger."""
+    through the external reliability ledger (if one is configured)."""
     detect = detect_runners_with_reliability if reliable_only else detect_runners
     detected = detect(runners)
     for spec in detected:
@@ -223,7 +223,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out", type=Path, default=None, help="save full JSON report here")
     ap.add_argument("--runners", nargs="*", default=None, help="subset of runner names to test, default: all detected")
     ap.add_argument("--reliable-only", action="store_true",
-                    help="skip runners flagged unreliable in [redacted-private-project]'s ledger")
+                    help="skip runners flagged unreliable in the reliability ledger")
     args = ap.parse_args(argv)
 
     from .evals import KNOWN_RUNNERS

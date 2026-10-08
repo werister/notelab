@@ -39,6 +39,65 @@ _LOW_AUTHORITY_DOMAINS = {
 # Content-farm / SEO-spam shaped hostnames get a small penalty.
 _SPAM_HINTS = re.compile(r"(top\d+|best-?\d+|listicle|clickbait|cheap|-deals?)", re.I)
 
+# --- Source-type classification --------------------------------------------------
+# NoteLab's premise is a *diverse* research library — papers, docs, repos, step-by-step
+# videos, and community discussion each answer a different question about a topic. The
+# scorer therefore recognizes a source's KIND (not just its domain) so set-level
+# diversity can reward a balanced mix, and so a video/discussion isn't mistaken for a
+# low-authority web page. Classification is deterministic and URL/title-driven — no
+# network, no model. Unknown sources fall back to "web" (neutral).
+
+_VIDEO_DOMAINS = {"youtube.com", "youtu.be", "vimeo.com"}
+_DISCUSSION_DOMAINS = {
+    "reddit.com", "ycombinator.com", "stackoverflow.com", "stackexchange.com",
+    "quora.com", "discourse.org", "substack.com",
+}
+_REPO_DOMAINS = {"github.com", "gitlab.com", "bitbucket.org", "sourceforge.net"}
+_PAPER_DOMAINS = {
+    "arxiv.org", "ssrn.com", "jstor.org", "pnas.org", "nature.com", "science.org",
+    "acm.org", "ieee.org", "springer.com", "sciencedirect.com", "cell.com",
+    "biorxiv.org", "medrxiv.org", "openreview.net", "semanticscholar.org", "doi.org",
+    "aclanthology.org", "preprints.org", "ceur-ws.org", "alphaxiv.org", "mlr.press",
+    "neurips.cc", "proceedings.mlr.press",
+}
+_DOCS_DOMAINS = {
+    "docs.python.org", "developer.mozilla.org", "readthedocs.io", "readthedocs.org",
+    "rfc-editor.org", "kernel.org", "wikipedia.org",
+}
+_REFERENCE_DOMAINS = {"wikipedia.org", "wikibooks.org", "wiktionary.org"}
+
+# ordered: first match wins; the five "diverse-library" kinds a research notebook
+# ideally spans. "reference" and "web" are the neutral fallbacks.
+SOURCE_TYPES = ("paper", "docs", "repo", "video", "discussion", "reference", "web")
+
+
+def classify_source_type(url: str, title: str = "") -> str:
+    """Classify a source into one of SOURCE_TYPES from its URL (and title as a hint).
+    Deterministic and offline. Unknown -> 'web'."""
+    dom = _domain(url)
+    reg = _registrable(dom)
+    t = (title or "").lower()
+    if not dom:
+        # non-web source (uploaded PDF, pasted text): a title ending in .pdf or
+        # mentioning "paper"/"preprint" leans paper, else neutral web.
+        if t.endswith(".pdf") or "preprint" in t or "arxiv" in t:
+            return "paper"
+        return "web"
+    if reg in _VIDEO_DOMAINS or "/watch" in url or "youtu.be/" in url:
+        return "video"
+    if reg in _REPO_DOMAINS:
+        return "repo"
+    if reg in _PAPER_DOMAINS:
+        return "paper"
+    if reg in _DISCUSSION_DOMAINS:
+        return "discussion"
+    if reg in _REFERENCE_DOMAINS:
+        return "reference"
+    if reg in _DOCS_DOMAINS or dom.startswith("docs.") or "/docs/" in url or t.endswith(".pdf"):
+        return "docs"
+    return "web"
+
+
 _WORD_RE = re.compile(r"[a-z0-9]+", re.I)
 _STOPWORDS = {
     "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "is", "are",
@@ -78,6 +137,9 @@ class SourceFeatures:
     content: str = ""
     published: datetime | None = None
 
+    # optional explicit override; when "" the type is derived from url/title.
+    source_type: str = ""
+
     @property
     def domain(self) -> str:
         return _domain(self.url)
@@ -85,6 +147,12 @@ class SourceFeatures:
     @property
     def registrable(self) -> str:
         return _registrable(self.domain)
+
+    @property
+    def kind(self) -> str:
+        """Source type (paper/docs/repo/video/discussion/reference/web). Uses an
+        explicit `source_type` if set, else classifies from url/title."""
+        return self.source_type or classify_source_type(self.url, self.title)
 
 
 @dataclass
@@ -98,6 +166,9 @@ class QualityWeights:
     # tuning knobs
     recency_halflife_days: float = 365.0  # smaller = more aggressively favor fresh
     depth_target_chars: int = 4000        # content length that scores ~1.0 on depth
+    # how much the diversity signal counts research-KIND spread (paper/video/repo/...)
+    # vs raw domain spread. 0.5 = equal; 0.0 = legacy domain-only behaviour.
+    diversity_type_weight: float = 0.5
     authority_overrides: dict[str, float] = field(default_factory=dict)  # domain -> 0..1
     # question term -> set of synonym/related terms that ALSO count as covering it.
     # Deterministic, config-driven semantic-lite matching (no embeddings/network):
@@ -117,6 +188,7 @@ class QualityWeights:
             relevance=self.relevance / total,
             recency_halflife_days=self.recency_halflife_days,
             depth_target_chars=self.depth_target_chars,
+            diversity_type_weight=self.diversity_type_weight,
             authority_overrides=self.authority_overrides,
             term_expansions=self.term_expansions,
         )
@@ -138,6 +210,14 @@ def authority_score(s: SourceFeatures, weights: QualityWeights) -> float:
         score = 0.95
     elif reg in _LOW_AUTHORITY_DOMAINS:
         score = 0.30
+    # Platform-shaped sources (video, repo, discussion) are neutral on *authority* by
+    # construction — authority is the wrong axis for them. They earn their place through
+    # relevance, depth, and the KIND-diversity signal, not by being penalized here for
+    # not being a .edu. Keep them at the 0.5 neutral baseline rather than lumping, e.g.,
+    # a well-known Q&A/discussion host in with content-farm low authority.
+    kind = classify_source_type(url=s.url, title=s.title)
+    if kind in ("video", "repo", "discussion") and score < 0.5:
+        score = 0.5
     if _SPAM_HINTS.search(dom):
         score = min(score, 0.25)
     return score
@@ -178,7 +258,7 @@ def relevance_score(s: SourceFeatures, question_terms: set[str],
     return covered / len(question_terms)
 
 
-def diversity_score(sources: list[SourceFeatures]) -> float:
+def domain_diversity_score(sources: list[SourceFeatures]) -> float:
     """Set-level: domain entropy normalized to 0..1. One source scores 0 (no diversity)."""
     if len(sources) <= 1:
         return 0.0
@@ -192,6 +272,38 @@ def diversity_score(sources: list[SourceFeatures]) -> float:
     return max(0.0, min(1.0, base * distinct_ratio))
 
 
+def type_diversity_score(sources: list[SourceFeatures]) -> float:
+    """How many of the distinct research KINDS the set spans (paper/docs/repo/video/
+    discussion/...), normalized by how many kinds a set this size could realistically
+    cover. This is what makes "a paper + a repo + a video + a Reddit thread" rank as
+    genuinely diverse while "six blogs on six domains" does not — the core NoteLab
+    premise that a research library should be a *mix of kinds*, not just a spread of
+    hostnames. One source scores 0."""
+    if len(sources) <= 1:
+        return 0.0
+    kinds = {s.kind for s in sources}
+    # the richest meaningfully-distinct palette we reward spanning (exclude the two
+    # neutral fallbacks from the denominator so hitting them doesn't look like variety).
+    rich_kinds = {k for k in kinds if k not in ("web",)}
+    reachable = min(len(sources), len(SOURCE_TYPES) - 1)  # can't span more kinds than sources
+    if reachable <= 0:
+        return 0.0
+    return max(0.0, min(1.0, len(rich_kinds) / reachable))
+
+
+def diversity_score(sources: list[SourceFeatures], type_weight: float = 0.5) -> float:
+    """Composite set-level diversity: a blend of domain spread and research-kind spread.
+    `type_weight` (0..1) sets how much the kind mix counts vs the domain mix; the default
+    0.5 weights them equally. type_weight=0.0 reproduces the original domain-only score,
+    so existing numbers move only when kind variety actually differs."""
+    dom = domain_diversity_score(sources)
+    if type_weight <= 0.0:
+        return dom
+    typ = type_diversity_score(sources)
+    tw = max(0.0, min(1.0, type_weight))
+    return max(0.0, min(1.0, (1.0 - tw) * dom + tw * typ))
+
+
 # --- Composite ------------------------------------------------------------------
 
 @dataclass
@@ -202,10 +314,11 @@ class SourceScore:
     depth: float
     recency: float
     relevance: float
+    kind: str = "web"
 
     def as_dict(self) -> dict:
         return {
-            "id": self.id, "domain": self.domain,
+            "id": self.id, "domain": self.domain, "kind": self.kind,
             "authority": round(self.authority, 4), "depth": round(self.depth, 4),
             "recency": round(self.recency, 4), "relevance": round(self.relevance, 4),
         }
@@ -214,16 +327,22 @@ class SourceScore:
 @dataclass
 class QualityReport:
     quality_score: float                # composite 0..1 for the whole run
-    diversity: float                    # set-level signal
+    diversity: float                    # set-level signal (domain + kind blend)
     n_sources: int
     per_source: list[SourceScore]
     signal_means: dict[str, float]      # mean of each per-source signal
     weights: dict[str, float]
+    type_mix: dict[str, int] = field(default_factory=dict)        # kind -> count
+    type_diversity: float = 0.0         # kind-spread sub-signal (0..1)
+    domain_diversity: float = 0.0       # domain-spread sub-signal (0..1)
 
     def as_dict(self) -> dict:
         return {
             "quality_score": round(self.quality_score, 4),
             "diversity": round(self.diversity, 4),
+            "type_diversity": round(self.type_diversity, 4),
+            "domain_diversity": round(self.domain_diversity, 4),
+            "type_mix": dict(self.type_mix),
             "n_sources": self.n_sources,
             "signal_means": {k: round(v, 4) for k, v in self.signal_means.items()},
             "weights": {k: round(v, 4) for k, v in self.weights.items()},
@@ -249,17 +368,19 @@ def score_sources(
             depth=depth_score(s, w),
             recency=recency_score(s, w),
             relevance=relevance_score(s, qterms, w.term_expansions),
+            kind=s.kind,
         ))
 
     n = len(per_source)
     if n == 0:
-        return QualityReport(0.0, 0.0, 0, [], {}, _weights_dict(w))
+        return QualityReport(0.0, 0.0, 0, [], {}, _weights_dict(w),
+                             type_mix={}, type_diversity=0.0, domain_diversity=0.0)
 
     mean_auth = sum(p.authority for p in per_source) / n
     mean_depth = sum(p.depth for p in per_source) / n
     mean_rec = sum(p.recency for p in per_source) / n
     mean_rel = sum(p.relevance for p in per_source) / n
-    div = diversity_score(sources)
+    div = diversity_score(sources, type_weight=w.diversity_type_weight)
 
     composite = (
         w.authority * mean_auth
@@ -278,6 +399,9 @@ def score_sources(
             "recency": mean_rec, "relevance": mean_rel, "diversity": div,
         },
         weights=_weights_dict(w),
+        type_mix=dict(Counter(p.kind for p in per_source)),
+        type_diversity=type_diversity_score(sources),
+        domain_diversity=domain_diversity_score(sources),
     )
 
 
@@ -305,6 +429,13 @@ PRESETS: dict[str, QualityWeights] = {
     # (the canonical doc is what you want, not many opinions).
     "docs": QualityWeights(authority=0.35, depth=0.30, relevance=0.25,
                            diversity=0.05, recency=0.05),
+    # Starting a project: you want a *diverse mix of kinds* — papers for the theory,
+    # docs/repos to build on, step-by-step videos, and community discussion for the
+    # gotchas. Diversity dominates and leans hard on KIND spread; recency matters
+    # (tooling moves) but authority is relaxed so videos/discussion aren't buried.
+    "project_kickstart": QualityWeights(
+        authority=0.15, diversity=0.30, recency=0.20, relevance=0.20, depth=0.15,
+        diversity_type_weight=0.8, recency_halflife_days=540.0),
     # Balanced default (same as QualityWeights() defaults, named for discoverability).
     "balanced": QualityWeights(),
 }

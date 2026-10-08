@@ -107,11 +107,11 @@ class Store:
 
     def _migrate_fts_tokenizer(self) -> None:
         """`CREATE VIRTUAL TABLE IF NOT EXISTS` won't retrofit a tokenizer change onto
-        an existing db file (found live: an early catalog_search test on real data
-        returned 0 hits for "PSD2 aggregator" despite 5 exact "PSD2" hits and 2 exact
-        "aggregators" hits -- singular/plural weren't matching). If sources_fts wasn't
-        built with the porter tokenizer, drop and rebuild it from `sources` (the FTS
-        index is fully derived, so this loses nothing)."""
+        an existing db file: without the porter tokenizer, a search misses singular/
+        plural variants (e.g. a query term returns 0 hits even when the index holds
+        exact matches of its plural form). If sources_fts wasn't built with the porter
+        tokenizer, drop and rebuild it from `sources` (the FTS index is fully derived,
+        so this loses nothing)."""
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'sources_fts'"
         ).fetchone()
@@ -161,10 +161,10 @@ class Store:
 
     def latest_winner_score(self, question: str) -> float:
         """Winner score of the most recent experiment FOR THIS QUESTION (not the most
-        recent experiment overall -- found live: research_learn_topic's best_score was
-        silently 0.0 for a topic with a real recorded 0.6553 winner, because the caller
-        used list_experiments(1) -- the single latest experiment across ALL topics --
-        and only used it if it happened to match this question)."""
+        recent experiment overall). Scoping by question matters: querying the single
+        latest experiment across ALL topics and using it only when it happens to match
+        this question reports best_score=0.0 for a topic that does have a recorded
+        winner, whenever a different topic was experimented on more recently."""
         row = self.conn.execute(
             "SELECT winner_score FROM experiments WHERE question = ? "
             "AND winner_score IS NOT NULL ORDER BY id DESC LIMIT 1",
@@ -311,17 +311,17 @@ class Store:
 
     def search_sources(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search titles/urls. Terms are OR'd with a trailing prefix match
-        each (found live: FTS5's default is an implicit AND of every term, so a
-        natural query like "PSD2 aggregator" returned 0 rows against real data that
-        plainly had both words -- one term not matching killed the whole query. This
-        catalog exists so an agent can check "do we already know about X" before
-        spending a real Deep Research run; a false "no results" defeats that, an
-        over-broad result list doesn't -- so OR + prefix optimizes for recall)."""
+        each. FTS5's default is an implicit AND of every term, so a natural two-word
+        query returns 0 rows unless a single source matches both words -- one term
+        missing kills the whole query. This catalog exists so an agent can check "do
+        we already know about X" before spending a real Deep Research run; a false
+        "no results" defeats that while an over-broad list doesn't, so OR + prefix
+        optimizes for recall."""
         # split on anything that isn't a word character, not just whitespace -- FTS5's
-        # query parser treats bare '-' as NOT (found live: "robo-advisor" unquoted was
-        # parsed as "robo AND NOT advisor*", not one token, killing every match even
-        # after the AND/stemming fix above), and the unicode61 indexer tokenizes the
-        # same way on the write side, so this keeps query- and index-side splitting
+        # query parser treats a bare '-' as NOT, so a hyphenated term like "robo-advisor"
+        # left unquoted is parsed as "robo AND NOT advisor*" (one operator, not one
+        # token), killing every match. The unicode61 indexer tokenizes the same way on
+        # the write side, so splitting here keeps query- and index-side splitting
         # consistent instead of just working around one operator.
         terms = [t for t in re.split(r"\W+", query) if t]
         fts_query = " OR ".join(f'{t}*' for t in terms) if terms else query

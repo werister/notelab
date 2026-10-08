@@ -10,11 +10,26 @@ without forking. Pass a preset name or a dict of overrides as `weights` to
 
 | Signal | Rewards |
 |---|---|
-| `authority` | primary sources, papers, gov/edu, official docs; penalizes content farms |
-| `diversity` | distinct domains/authors (domain entropy) — not 8 copies of one blog |
+| `authority` | primary sources, papers, gov/edu, official docs; penalizes content farms. Platform sources (video, repo, discussion) sit at a neutral baseline rather than being penalized for not being a journal |
+| `diversity` | a blend of **domain** spread and research-**kind** spread — a mix of a paper, a repo, a video and a discussion beats eight blogs on eight domains |
 | `recency` | fresher sources (exponential decay, `recency_halflife_days`) |
 | `depth` | substantial content vs. thin stubs (`depth_target_chars`) |
 | `relevance` | overlap of source text with the question's terms |
+
+### Source kinds and kind-diversity
+
+Every source is classified (offline, from its URL/title) into one of
+`paper · docs · repo · video · discussion · reference · web`. The `diversity` signal
+then blends two sub-signals, controlled by `diversity_type_weight` (0..1, default 0.5):
+
+- **domain spread** — distinct hostnames (the original behaviour; `diversity_type_weight=0.0` reproduces it exactly), and
+- **kind spread** — how many distinct research *kinds* the set spans.
+
+This is why a research library of *one kind* (e.g. all papers) now scores lower on
+diversity than a genuinely mixed set, matching how a human judges a good starting
+library. Every report exposes `type_mix`, `type_diversity`, and `domain_diversity`
+alongside the blended `diversity`, so the number is auditable. Set an explicit
+`source_type` on a `SourceFeatures` to override the automatic classification.
 
 ## Presets (`notelab.research.quality.PRESETS`)
 
@@ -23,6 +38,7 @@ without forking. Pass a preset name or a dict of overrides as `weights` to
 | `news` | 0.30 | **0.35** | 0.15 | 0.05 | 0.15 | 30 d | current events — fresh + authoritative wins |
 | `lit_review` | 0.30 | 0.00 | 0.25 | **0.30** | 0.15 | 5 y | surveys — depth + breadth, recency irrelevant |
 | `docs` | **0.35** | 0.05 | 0.05 | 0.30 | 0.25 | — | API/technical — the canonical doc, not many opinions |
+| `project_kickstart` | 0.15 | 0.20 | **0.30** | 0.15 | 0.20 | 18 mo | starting a project — a diverse mix of papers, docs, repos, videos and community discussion; leans hard on kind spread (`diversity_type_weight=0.8`) |
 | `balanced` | 0.25 | 0.15 | 0.20 | 0.20 | 0.20 | 1 y | the default |
 
 ### Use a preset
