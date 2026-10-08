@@ -1,436 +1,177 @@
 # NoteLab 🧪
 
-**Give your coding agent a research lab and a memory: questions it answers exactly, sources it can't silently corrupt, and every version of your code kept.**
+**A self-improving research lab for your coding agent, on top of Google NotebookLM — it scores whether your research is any good, guards your notebooks from silent corruption, and turns a pile of sources into an action plan.**
 
 [![tests](https://github.com/werister/notelab/actions/workflows/tests.yml/badge.svg)](https://github.com/werister/notelab/actions/workflows/tests.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/engine-stdlib--only-informational)
 
-**Starting a project well means reading widely first** — the papers, the official docs, the
-repos people actually build on, the step-by-step videos, and the honest community threads about
-what goes wrong. NoteLab turns that scattered reading into one scored, queryable research library,
-then helps your agent turn it into a concrete setup: a plan, mock data, tests, and code snippets.
+![NoteLab in 23 seconds: the guard says no, the loop learns, every code version queryable, tests green, live agent evals 6/6](brag-output/demo.gif)
 
-**What NoteLab gives your agent:**
-
-| | What it gives your agent | Why it matters |
-|---|---|---|
-| 🧪 **A diverse research library** | Pulls papers, docs, repos, videos and discussion into one notebook; scores the set on authority, **kind-diversity**, recency, depth and relevance | A good starting library is a *mix of kinds*, not ten links to the same kind of page. The score rewards that mix, so "did I read widely enough?" becomes a number — and the agent asks the notebook questions instead of re-reading PDFs. |
-| 🧭 **A path from reading to building** | A/B-tests research prompts, remembers the winner per topic, prunes stale sources, and feeds the diverse notebook into a scaffolded setup | Research stops being "this felt better" and becomes something you can compare and reuse — then becomes a spec, step-by-step plan, mock data and snippets you can build on. |
-| 🛡️ **A guard** (`nlmx`) | Refuses the NotebookLM behaviours that silently corrupt a research library | A repeated import duplicates every source behind the same green checkmark. Live agents from two model families were pointed at the guard and stopped 6/6. |
+*23 seconds, every frame real output. [Full video with sound](brag-output/brag.mp4).*
 
 Most "NotebookLM MCP" tools are a remote control: create notebook, add source, query. NoteLab is the
-layer above it — it judges *whether the research is any good* and helps you act on it. A local, versioned
-[code index](#also-included-a-versioned-code-index) is included for exact code lookups, but the heart of
-NoteLab is the research library.
+layer *above* it — it judges whether the sources are any good, and helps your agent act on them.
 
-## Try it in 60 seconds (no NotebookLM account)
+## Highlights
+
+- 🧪 **A scored, diverse research library.** Pulls papers, docs, repos, videos and discussion into a notebook and scores the set — authority, **kind-diversity**, recency, depth, relevance — so "did I read widely enough?" is a number, not a feeling. Deterministic, **zero model tokens**. → [quality model](docs/DESIGN.md)
+- 🎚️ **You decide what counts as good.** Weight papers over forums, forums over papers, or anything per use-case with `kind_weights` — no fixed ranking baked in. → [the principle](docs/DESIGN-PRINCIPLE-user-owns-value.md) · [config](docs/CONFIG.md)
+- 🧭 **From a score to an action.** `research_export` turns the scored library into a report with a verdict, the gaps, and numbered **next actions** — safe to hand a human or paste into a PR.
+- 🛡️ **A guard (`nlmx`) that can't be talked around.** Refuses the NotebookLM commands that silently corrupt a library (duplicate imports, broken `--source-ids`, `chat start`). Live agents from two model families were stopped **6/6**. → [the guard & its evidence](docs/NLMX.md)
+- 🔁 **A loop that learns.** A/B-test research prompts on measured source quality, store the winner per topic, replay it next time. → [how it works](#how-it-works)
+- 🔎 **A versioned code index** (bonus, no account needed). Exact `where is X` / `who calls X` / `what subclasses X` / `what changed since v1.2`, with real `repo@commit/path:line` source — and every version is kept.
+- 📦 **Stdlib-only engine.** The whole scorer/loop/MCP server installs and tests with **zero third-party dependencies**; you can read the whole thing.
+
+## Install
+
+```bash
+pip install -e .                       # stdlib-only, no third-party deps
+```
+Wire it into any MCP client:
+```json
+{ "mcpServers": { "nlm-research": { "command": "nlm-research-mcp" } } }
+```
+Prefer the official MCP SDK? `pip install -e ".[mcp]"` then `nlm-research-mcp --sdk`.
+
+**Live NotebookLM research** additionally needs the upstream [`nlm`](https://github.com/jacob-bd/notebooklm-mcp-cli) CLI (it owns Google auth); everything else — scorer, A/B, planner, evals, catalog, code index — runs without an account.
+```bash
+pipx install notebooklm-mcp-cli && nlm login && nlm login --check
+```
+Install the agent skills (Claude Code / Cursor / Copilot): `scripts/install-skills.sh <claude|cursor|all> --with-guard`.
+
+## Try it in 60 seconds (no account)
 
 ```bash
 git clone https://github.com/werister/notelab && cd notelab
 pip install -e ".[dev]"
 scripts/verify.sh            # offline tests + demo + guard refusals, one checklist
 ```
-
 ```
 NoteLab verify
-  PASS  engine imports (stdlib only)
-  PASS  offline test suite
-  PASS  self-improving loop demo
-  PASS  code index: exact lookup + versions
-  PASS  guard refuses --source-ids
-  PASS  guard refuses chat start
+  PASS  engine imports (stdlib only)      PASS  code index: exact lookup + versions
+  PASS  offline test suite                PASS  guard refuses --source-ids
+  PASS  self-improving loop demo          PASS  guard refuses chat start
   PASS  skills present with frontmatter
 All good.
 ```
-
-Then install the skills into your agent, or paste this to Claude Code and let it do it:
-
-> Install NoteLab's skills: run `git clone https://github.com/werister/notelab ~/notelab && ~/notelab/scripts/install-skills.sh claude --with-guard && ~/notelab/scripts/verify.sh`, then tell me which of the four skills (nlm-skill, research-loop, skill-evolution, code-questions) fits what I do and give me one prompt to try it.
-
-## Build something with it (starter recipes)
-
-Each recipe is a prompt you paste into your agent after installing the skills. Pick the one that
-matches what you are trying to do.
-
-**1. "I'm starting a project — read widely first and tell me if the library is any good" (needs `nlm`)**
-> Use the research-loop skill with the `project_kickstart` weights. Research `<the thing I want to build>`, pulling papers, official docs, example repos, a step-by-step video and community discussion. Score the notebook and tell me whether the *mix of source kinds* is diverse enough or lopsided.
-
-You get a composite score plus a `type_mix` (how many papers / docs / repos / videos / discussions) and a `type_diversity`
-number, so "did I read widely enough?" is answerable, not a feeling. A library that's all papers scores *lower* on
-diversity than a genuine mix — by design.
-
-**2. "Turn what I found into a concrete setup" (needs `nlm`)**
-> From the winning notebook, draft how to set this up step by step: a short spec, the directory layout, mock data, a couple of tests, and the key code snippets — each grounded in a cited source.
-
-The notebook holds the diverse sources; the agent synthesizes them into something you can build on, with citations back
-to the paper/doc/repo/video/thread each step came from.
-
-**3. "Do a literature review I can keep questioning" (needs `nlm`)**
-> Use the research-loop skill. Compare a broad and an authoritative-sources prompt on `<your question>`. Tell me which found better sources and by how much, then answer my follow-ups from the winning notebook.
-
-You get a winner, a margin and per-signal scores, then cited answers from a notebook, not a pile of PDFs in your agent's context.
-
-**4. "Stop my agent from wrecking my notebooks" (needs `nlm`)**
-```bash
-scripts/install-skills.sh claude --with-guard
-```
-> Using nlm-skill, import the research results into notebook `<id>`. Then do it again.
-
-The second import is refused, with a reason, instead of doubling your sources.
-
-**5. "Understand a library before I build on it" (no account needed)**
-```bash
-python3 -m notelab.codeindex index ~/code/some-lib      # once; version = git commit
-```
-> Use the code-questions skill. Where is `<function>` defined, who calls it, and what subclasses `<Class>`? Show the exact source.
-
-You get `repo@commit/path:line` answers with real code, in milliseconds — see [the code index](#also-included-a-versioned-code-index).
-
-## Which engine answers which question
-
-```mermaid
-flowchart TD
-    Q["Your question"] --> T{"What kind?"}
-    T -- "starting a project: read widely across<br/>papers, docs, repos, videos, discussion" --> NB["Diverse notebook<br/>scored on authority + kind-diversity;<br/>cited answers, nothing re-read by the agent"]
-    T -- "literature review / prose,<br/>many sources, asked repeatedly" --> NB
-    T -- "how does the design hang together<br/>across files, docs and issues" --> NBF["Notebook of the real files<br/>research_ingest_codebase mode=files"]
-    T -- "where is / who calls / what subclasses /<br/>show exact source / what changed since" --> CI["code_find, code_diff<br/>local index: exact, instant, versioned"]
-    T -- "small repo, one-off look" --> G["Plain grep is fine"]
-```
-
-## What goes wrong without it
-
-These are observed failures, each reproduced on isolated notebooks and checked against
-ground truth (`nlm source list`), not trusted at face value. Evidence in
-[docs/NLMX.md](docs/NLMX.md).
-
-| # | The failure | What the agent sees | What NoteLab does |
-|---|---|---|---|
-| 1 | `research import` run twice **duplicates every source** | The same "✓ Imported N sources" both times | `nlmx` keeps a local ledger and refuses the repeat unless `--force` |
-| 2 | `--source-ids` **deselects every source** instead of scoping to one | `sources_used: []` | `nlmx` refuses and names the working alternative |
-| 3 | Generation commands without `--confirm` silently no-op | Nothing | `nlmx` injects the flag |
-| 4 | `chat start` opens a REPL an agent can't drive | A hang | `nlmx` refuses and points to one-shot `query` |
-| 5 | Research prompts are tuned by vibes | "This one felt better" | A/B on measured **source quality**, winner stored in a ledger |
-| 6 | Notebooks fill with duplicates and stale sources | Quality decays quietly | `research_evolve_notebook` plans create / merge / skip / evict (dry run first) |
-| 7 | Skills and prompts get edited and hoped about | No evidence either way | Champion vs challenger on a fixed battery, gated on margin, held-out and a green tree |
-
-## Why this is a good place to start
-
-If you are new to building with agents, "research" is where most people start and where most burn time and
-money: ask an agent about a topic, and it opens a few pages, downloads PDFs, reads them into its own context and
-summarizes. It works once, costs a lot, can't show its work, and you can't tell whether the second attempt was
-any better. NoteLab gives a beginner four things that normally take months of mistakes to learn:
-
-- **A guard rail.** The agent can't quietly wreck your library with a repeated command. A refusal explains itself, so you learn what went wrong instead of debugging a silent failure.
-- **A scoreboard.** Every run gets a number that decomposes into five readable signals (authority, diversity, recency, depth, relevance). You build the habit of measuring a prompt instead of trusting a feeling, which is the core skill of working with agents.
-- **Learning material, not just links.** One question pulls in explainer videos, lectures, blog walkthroughs, Wikipedia and the original papers together (below), so you can ask "explain it simply" and "show me the primary source" of the same notebook.
-- **Small, readable pieces.** The engine is plain Python with no dependencies, the tests run offline, and `scripts/verify.sh` tells you in seconds whether your setup works. You can read the whole thing.
-
-## Better than just letting an agent research
-
-| Letting an agent research on its own | With NoteLab |
-|---|---|
-| It reads each page and PDF inside its own context, again for every follow-up | NotebookLM retrieves and indexes the sources outside the agent; follow-ups are questions to the notebook and return cited answers |
-| "Which sources are good?" is the model's opinion, different every time | A deterministic scorer runs locally over the source list: **zero model tokens**, same input gives the same score, and every number shows its parts |
-| A prompt is "better" because it felt better | Prompts are A/B-tested on measured source quality, the winner is stored in a ledger and replayed next time |
-| Duplicates and stale sources pile up unnoticed | `research_evolve_notebook` plans create / merge / skip / evict, dry run first |
-| A repeated import silently doubles your sources | `nlmx` refuses it, with a reason |
-| Prior work is forgotten next session | Experiments, winners, per-topic strategy and every indexed code version are stored locally and stay queryable |
-
-There is no token-savings percentage here, on purpose: the saving is structural (the agent doesn't ingest the
-documents), and it depends on your agent and how many sources you have. Run the same question both ways and
-compare your own usage.
-
-## What it finds: from explainer videos to research papers
-
-Deep Research doesn't just return links to the same kind of page. For the question *"how transformers attention
-works: explainer videos, lectures, blog posts and the original papers"*, **one fast run** (about 100 seconds)
-returned this mix, which we then scored with `research_score_notebook`:
-
-| Kind | What came back |
-|---|---|
-| 🎬 Video lectures | 3Blue1Brown, "Attention in transformers, step-by-step"; MIT 6.S191 on RNNs, transformers and attention |
-| 📄 Papers and course notes | "Formal Algorithms for Transformers" (arXiv), "Neural Machine Translation by Jointly Learning to Align and Translate" (ICLR), Stanford CS224n self-attention notes |
-| ✍️ Walkthroughs | The Illustrated Transformer, Transformers from scratch, Raschka's self-attention tutorial, a scaled dot-product explainer |
-| 📚 Orientation | Wikipedia, "Attention Is All You Need" |
-
-NoteLab scored that set **~0.63 overall, with a kind mix of 2 videos / 2 papers / 1 reference / 5
-walkthroughs** across 10 domains. The scorer gives arXiv and Wikipedia high authority (0.95) and treats
-video domains and personal blogs as neutral (0.5) rather than pretending to rank them — videos earn their
-place through relevance and the kind-diversity signal. (A set this blog-heavy scores *lower* on
-kind-diversity than a more balanced spread would, which is the signal doing its job: it is telling you to
-pull in a repo or a discussion thread, not just more walkthroughs.)
-
-**Videos need a repair step.** Deep Research imports a YouTube link as an ordinary web page, which is often a
-*"Sign in to confirm you're not a bot"* wall rather than the transcript — the notebook looks full but knows nothing
-about the video. `research_fix_videos(notebook_id)` lists every YouTube source, flags blocked copies, and with
-`apply=true` re-adds them natively so the real transcript (tens of thousands of characters) is used. It only adds
-sources; deleting the blocked copies is a separate `remove_junk=true` you must ask for. Run it after any research
-import that touched videos.
-
-### Where it fits, and where it doesn't
-
-- **Papers, docs, videos and prose you will question repeatedly:** the notebook route.
-
-#### Also included: a versioned code index
-
-A grep-capable agent already answers small code questions well, so for a quick look at one small repo, use grep.
-Where the code index earns its place is exactness and *history* — it's a supporting feature, not the headline:
-  1. **Exact, targeted lookups you can trust**: `code_find` returns the real source with
-     `repo@version/path:line` for *where is X defined*, *who calls X* (AST-accurate in Python),
-     *what subclasses X* and ranked text search. Indexed locally in under a second, no model tokens.
-  2. **Versions that are never forgotten.** Every `code_index` run keeps a snapshot (labelled by git
-     commit), deduplicated by content. Ask about any past version, or `code_diff` two of them:
-     on click 8.1.7 vs main it listed 1 file added, 140 functions added, 78 removed and 293 changed
-     in one call, and each version's `Context.forward` stayed queryable with no checkout.
-  3. **Many repos in one place**, plus an optional notebook (`research_ingest_codebase(mode="files")`)
-     for conceptual, cross-document questions that grep can't answer.
-
-  `research_ingest_codebase`'s default `digest` mode holds only a structure summary, not source; use `mode="files"`
-  when you want the notebook to answer detail questions.
-
-## You decide what counts as a good source
-
-NoteLab has **no fixed opinion** that papers beat forums or that a diverse mix is always best.
-*You* own what you value, and it changes with the task:
-
-- A **literature review** → papers and official docs; discount forums and videos.
-- **Learning a tool** → step-by-step videos and community threads *above* papers.
-- **Starting a project** → a balanced mix of all of them.
-
-Say so with `kind_weights` — a map from source kind (`paper · docs · repo · video ·
-discussion · reference · web`) to how much you value it. `0.0` means "ignore this kind
-entirely"; it won't raise the score or count toward diversity.
-
-```python
-# "For this review I value papers; forums and videos shouldn't move the score."
-weights = {"kind_weights": {"paper": 1.0, "docs": 0.8, "discussion": 0.0, "video": 0.0}}
-
-# "I'm learning a tool — walkthroughs and community threads matter most."
-weights = {"kind_weights": {"discussion": 1.0, "video": 0.9, "paper": 0.3}}
-```
-
-Two ready-made presets encode opposite-but-equally-valid values: **`academic`** (papers and
-docs over forums/videos) and **`forum_first`** (discussion and videos over papers). The same
-source set scores differently under each — because "good" is *your* call, not NoteLab's.
-Empty `kind_weights` (the default) treats every kind equally. Full detail:
-[docs/CONFIG.md](docs/CONFIG.md) and the design note
-[docs/DESIGN-PRINCIPLE-user-owns-value.md](docs/DESIGN-PRINCIPLE-user-owns-value.md).
-
-## From a score to an action: `research_export`
-
-A number isn't a decision. `research_export(notebook_id, question)` turns the scored
-library into an **actionable report** — a verdict, the source-kind mix, the specific
-problems, and numbered **next actions** you (or your agent) can execute:
-
-```markdown
-# Research report: how to build a rag application with vector databases
-**Overall source quality:** 0.4468  ·  verdict: thin
-**Sources:** 4  ·  kind-diversity 0.25  ·  domain-diversity 1.0
-**Question coverage:** 0.2
-
-## What stands out
-- 1 source(s) look like blocked bot-wall / sign-in shells (kinds: video) — they hold no real content.
-- Question terms not covered by any source: application, build, databases, vector.
-- Overall source-quality score is low (0.4468).
-
-## Next actions
-1. Run `research_fix_videos(notebook_id, apply=true)` to re-add blocked videos natively…
-2. Research again targeting the uncovered terms (application, build, databases, vector)…
-3. Assessment says 'thin' — gather more / higher-quality sources before relying on this notebook.
-```
-
-Pass `fmt="json"` for the machine-readable model, `fmt="csv"` for a per-source
-spreadsheet, or `deep=true` to fold in the ablation/redundancy analysis. It's
-read-only and safe to hand to a human or paste into a PR.
-
-## How it works
-
-### 1. The guard: where `nlmx` sits
-
-```mermaid
-flowchart LR
-    A["Agent<br/>(Claude, Cursor, Copilot...)"] --> G{"nlmx<br/>guard"}
-    G -- "unsafe: repeat import,<br/>--source-ids, chat start" --> R["Refused with a reason<br/>nlm is never called"]
-    G -- "fixable: missing --confirm" --> F["Flag injected"] --> N
-    G -- "everything else" --> N["nlm<br/>(upstream CLI)"]
-    N --> L[("NotebookLM")]
-    G -.-> LG[("local import ledger")]
-```
-
-### 2. The loop: how each run improves the next
-
-```mermaid
-flowchart LR
-    Q["Question + 2-3<br/>prompt strategies"] --> E["research_run_experiment<br/>one isolated notebook per strategy"]
-    E --> S["Score sources:<br/>authority, diversity,<br/>recency, depth, relevance"]
-    S --> W{"Winner by<br/>margin?"}
-    W --> LED[("SQLite ledger")]
-    LED --> SUG["research_suggest_prompt<br/>replay the winner"]
-    LED --> LRN["research_learn_topic<br/>mutations + tuned weights"]
-    S --> EV["research_evolve_notebook<br/>create / merge / skip / evict<br/>(dry run, confirm to apply)"]
-    LRN --> Q
-    SUG --> Q
-    EV --> Q
-```
-
-Scores measure **source data quality, not answer quality**. A 0.9 arm found good sources;
-you still read them. A margin under 0.05 is a tie and the tool says so.
-
-### 3. The gate: how a skill earns promotion
-
-```mermaid
-flowchart LR
-    C["Champion"] --> D["Duel on a<br/>fixed battery"]
-    H["Challenger<br/>one change"] --> CR{"Critic screen:<br/>leaks suite secrets?"}
-    CR -- "yes" --> X["Rejected before any spend"]
-    CR -- "no" --> D
-    D --> G{"Gate"}
-    G -- "all four hold" --> P["Promote + archive in git"]
-    G -- "any fails" --> K["Keep champion<br/>loser stays inspectable"]
-```
-
-The four conditions, in code at `src/notelab/research/skill_evolve.py`:
-beats `max(margin, noise floor)`; prompt growth paid for by gain; no held-out task
-regresses; the tree is green on both runs.
 
 ## Pick your path
 
 | I want to… | Run | Needs |
 |---|---|---|
-| See the loop work | `python examples/self_improving_loop.py` | Python only |
+| See the self-improving loop work | `python examples/self_improving_loop.py` | Python only |
 | Ask exact questions about code, across versions | `python3 -m notelab.codeindex index <repo>` then `find` / `diff` | Python only |
-| Check my install | `scripts/verify.sh` | Python only |
-| Use the skills in my agent | `scripts/install-skills.sh claude` | Claude Code or Cursor |
-| Run the live research tools | [Go live](#go-live-real-notebooklm-research) | `nlm` account login |
-| Prove a guard stops a real agent | `python -m notelab.research.guard_evals ...` | An agent CLI + a test notebook |
-| Improve a skill with evidence | `skills/skill-evolution/scripts/evolve.py --init` | An agent CLI |
+| Research a topic and score the source mix | *"research-loop skill: A/B two prompts on `<question>`, tell me the winner + margin"* | `nlm` login |
+| Get an action plan from a notebook | `research_export(notebook_id, question)` | `nlm` login |
+| Stop an agent wrecking a notebook | `scripts/install-skills.sh claude --with-guard` | `nlm` login |
+| Improve a prompt/skill with evidence | `skills/skill-evolution/scripts/evolve.py --init` | an agent CLI |
 
-## The skills
+## What goes wrong without it
 
-Four skills in `skills/`. Install all of them: `scripts/install-skills.sh <claude|cursor|all> [--link] [--with-guard]`
-(`--link` symlinks so `git pull` updates them).
+Observed failures, each reproduced on isolated notebooks and checked against ground truth
+(`nlm source list`) — evidence in [docs/NLMX.md](docs/NLMX.md).
 
-<details open><summary><b>research-loop</b>: research <i>through</i> NoteLab</summary>
+| The failure | What the agent sees | What NoteLab does |
+|---|---|---|
+| `research import` run twice **duplicates every source** | the same "✓ Imported N sources" both times | `nlmx` keeps a ledger and refuses the repeat unless `--force` |
+| `--source-ids` **deselects every source** | `sources_used: []` | `nlmx` refuses and names the working alternative |
+| generation commands silently no-op without `--confirm` | nothing | `nlmx` injects the flag |
+| `chat start` opens a REPL an agent can't drive | a hang | `nlmx` refuses, points to one-shot `query` |
+| research prompts tuned by vibes | "this one felt better" | A/B on measured source quality, winner stored |
+| notebooks fill with duplicates / stale sources | quality decays quietly | `research_evolve_notebook` plans create/merge/skip/evict (dry-run first) |
 
-Use it when the job is "research X and get better at it". It drives the research MCP tools
-through the loop above and carries the rules: evolve is dry-run first, guard work goes
-through `nlmx`, record wins in the ledger instead of remembering them.
+## You decide what counts as a good source
 
-- **Try:** *"Use the research-loop skill. Run an experiment on 'what is the state of quantum error correction' with two prompt strategies and tell me which won and by how much."*
-- **You should see:** a `winner`, a `margin_over_runner_up`, and an experiment id in `research_history`.
-- **Worked flows:** [loop cookbook](skills/research-loop/references/loop-cookbook.md): improve a prompt, curate a notebook, prove a guard.
-</details>
+NoteLab has **no fixed opinion** that papers beat forums or that diversity is always best — *you*
+own what you value, and it changes with the task. Say so with `kind_weights`:
 
-<details><summary><b>skill-evolution</b>: make a prompt or skill measurably better</summary>
-
-Champion/challenger duels on a fixed battery. Promotes only through the gate above.
-Includes a guided setup and an effort dial (`smoke` / `standard` / `deep`) that prints
-the live-run budget before spending anything.
-
-- **Try:** `python skills/skill-evolution/scripts/evolve.py --init`
-- **You should see:** a walkthrough ending in the exact duel command and its run count.
-- **Protocol:** [SKILL.md](skills/skill-evolution/SKILL.md).
-</details>
-
-<details><summary><b>code-questions</b>: targeted, versioned code lookups</summary>
-
-Index a repo once, then ask exact questions: where is X defined (with its exact source), who calls
-X, what subclasses X, ranked text search, and what changed between two versions. Local and
-instant, no NotebookLM account needed.
-
-- **Try:** `python3 -m notelab.codeindex index . && python3 -m notelab.codeindex find main --kind def`
-- **You should see:** `<repo>@<commit>/<path>:<line>  [function main]` followed by the real source.
-- **Details:** [SKILL.md](skills/code-questions/SKILL.md).
-</details>
-
-<details><summary><b>nlm-skill</b>: operate NotebookLM safely</summary>
-
-Upstream's `nlm` skill with one added section that routes agents through `nlmx` and
-explains why, backed by the evidence table above.
-
-- **Try:** *"Using nlm-skill, list my notebooks."*
-- **You should see:** the agent calls `nlmx`, not bare `nlm`.
-</details>
-
-## Install
-
-<details><summary><b>Claude Code</b></summary>
-
-```bash
-scripts/install-skills.sh claude --with-guard
+```python
+# literature review: papers matter, forums/videos shouldn't move the score
+{"kind_weights": {"paper": 1.0, "docs": 0.8, "discussion": 0.0, "video": 0.0}}
+# learning a tool: walkthroughs and community threads matter most
+{"kind_weights": {"discussion": 1.0, "video": 0.9, "paper": 0.3}}
 ```
-</details>
+`0.0` means "ignore this kind." Presets **`academic`** and **`forum_first`** ship opposite values —
+the same sources score differently under each, because "good" is your call. Full detail:
+[docs/CONFIG.md](docs/CONFIG.md) · [the design principle](docs/DESIGN-PRINCIPLE-user-owns-value.md).
 
-<details><summary><b>Cursor</b></summary>
+## From a score to an action
 
-```bash
-scripts/install-skills.sh cursor --with-guard
+A number isn't a decision. `research_export(notebook_id, question)` renders the scored library as an
+actionable report (`fmt`: `markdown` default · `json` · `csv`):
+
+```markdown
+# Research report: how to build a rag application with vector databases
+**Overall source quality:** 0.4468  ·  verdict: thin
+**Sources:** 4  ·  kind-diversity 0.25
+
+## What stands out
+- 1 source(s) look like blocked bot-wall / sign-in shells (video) — no real content.
+- Question terms not covered by any source: application, build, databases, vector.
+
+## Next actions
+1. Run research_fix_videos(notebook_id, apply=true) to re-add blocked videos natively…
+2. Research again targeting the uncovered terms…
+3. Assessment says 'thin' — gather more / higher-quality sources first.
 ```
-</details>
 
-<details><summary><b>GitHub Copilot CLI</b></summary>
+## How it works
 
-```bash
-copilot skill add skills/research-loop
-copilot skill add skills/skill-evolution
-copilot skill add skills/nlm-skill
-copilot skill add skills/code-questions
+**The guard** — where `nlmx` sits between the agent and `nlm`:
+```mermaid
+flowchart LR
+    A["Agent"] --> G{"nlmx guard"}
+    G -- "unsafe: repeat import, --source-ids, chat start" --> R["Refused with a reason"]
+    G -- "fixable: missing --confirm" --> F["Flag injected"] --> N
+    G -- "everything else" --> N["nlm"] --> L[("NotebookLM")]
+    G -.-> LG[("import ledger")]
 ```
-</details>
 
-<details><summary><b>MCP server only (any MCP client)</b></summary>
-
-```bash
-pip install -e .          # stdlib-only: no third-party dependencies
+**The loop** — how each run improves the next:
+```mermaid
+flowchart LR
+    Q["Question + 2-3 strategies"] --> E["research_run_experiment"]
+    E --> S["Score sources:<br/>authority, diversity, recency, depth, relevance"]
+    S --> W{"Winner by margin?"}
+    W --> LED[("SQLite ledger")]
+    LED --> SUG["research_suggest_prompt"] --> Q
+    LED --> LRN["research_learn_topic<br/>mutations + tuned weights"] --> Q
+    S --> EV["research_evolve_notebook<br/>create/merge/skip/evict (dry-run)"] --> Q
 ```
-```json
-{ "mcpServers": { "nlm-research": { "command": "nlm-research-mcp" } } }
-```
-Prefer the official SDK? `pip install -e ".[mcp]"` and run `nlm-research-mcp --sdk`.
-</details>
 
-### Go live: real NotebookLM research
-
-The tools that touch NotebookLM call `nlmx`, which wraps the upstream
-[`nlm`](https://github.com/jacob-bd/notebooklm-mcp-cli). `nlm` owns authentication, so
-install and log in to it first. Everything else (scorer, A/B, planner, evals, catalog, MCP
-layer) runs without it, and tools return a clear error rather than failing to load.
-
-```bash
-pipx install notebooklm-mcp-cli      # or: uv tool install notebooklm-mcp-cli
-nlm login && nlm login --check       # browser login; cookies last weeks
-scripts/install-skills.sh claude --with-guard
-scripts/verify.sh                    # now also confirms nlm is on PATH
-```
+Scores measure **source data quality, not answer quality** — a 0.9 arm found good sources; you still
+read them. A margin under 0.05 is a tie, and the tool says so. Design & quality model:
+[docs/DESIGN.md](docs/DESIGN.md).
 
 ## Evaluations
 
-Claims here are backed by checks you can rerun. Full detail and commands: [docs/EVALUATIONS.md](docs/EVALUATIONS.md).
+Claims here are backed by checks you can rerun — full detail and commands in
+[docs/EVALUATIONS.md](docs/EVALUATIONS.md), a hands-on run in
+[docs/EVAL-REPORT-2026-10-08.md](docs/EVAL-REPORT-2026-10-08.md), and real-NotebookLM results in
+[docs/LIVE-FINDINGS-2026-10-08.md](docs/LIVE-FINDINGS-2026-10-08.md).
 
-| What is checked | How | Result |
-|---|---|---|
-| The guard stops a **real agent**, not just a unit test | Live agents from two model families are pointed at read-only scenarios (`--source-ids`, `chat start`, missing notebook). `nlmx` refuses before `nlm` is called. | **6 / 6** (opencode 3/3, claude 3/3), sweep of 2026-10-07 |
-| Honest scoring | Only substantive refusal markers count; runs that couldn't produce a signal (quota, usage limit, no shell) are reported as environment errors, never as passes or failures | by construction |
-| Skills improve only when they **measurably** win | Champion vs challenger on a fixed battery, gated on margin over a bootstrapped noise floor, a cost rule, no held-out regression, and a green tree | The recorded duels **held** (challenger tied the champion, so no promotion): the gate refuses unearned wins |
-| Research strategies improving or regressing | OLS-slope trend with the raw series (`research_eval_skill`) | Demo: `improving, +0.081/run` |
-| Source scoring is auditable | Every composite decomposes into its five signals; weights are config | See any `research_score_notebook` output |
-| Code index is exact and versioned | Tests for verbatim source, AST callers and subclasses, text search, kept versions, diffs, non-Python symbols | In the offline suite |
-| Video repair works on real notebooks | Live: blocked YouTube copies detected, native copies added, a lecture answered from its transcript | Checked on a real notebook (see above) |
-| The whole package | 367 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
+| What is checked | Result |
+|---|---|
+| The guard stops a **real agent**, not just a unit test | **6/6** across two model families (opencode 3/3, claude 3/3) |
+| Source scoring is auditable | every composite decomposes into its five signals; weights are config |
+| Skills improve only when they **measurably** win | recorded duels held (tie → no promotion); the gate refuses unearned wins |
+| Live NotebookLM path | verified end-to-end: auth, real Deep Research, the guard refusing a **real** duplicate import, `research_fix_videos` turning a 21k bot-wall shell into a 144k transcript |
+| The whole package | **367 offline tests pass**, 3 optional/env-gated skip; CI on Python 3.10/3.12/3.13 |
 
-**Design choices that limit blast radius**
+**What it does not do.** `nlmx` guards the behaviours above, not all of NotebookLM; everything else passes
+through to `nlm`. Source-quality scores say nothing about whether an answer is *correct*. It does not handle
+your Google credentials — `nlm` does. Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
-- Source eviction is a plan; applying it is confirm-gated. No silent delete path exists, and `research_fix_videos` never deletes unless asked.
-- Scores decompose into their five signals. No black-box verdict.
-- The engine imports only the standard library, so there is no dependency supply chain to audit.
-- Skill duels reject challengers that contain suite secrets *before* any spend.
+## The skills
 
-**What it does not do.** `nlmx` guards the four behaviours above, not all of NotebookLM; anything else passes
-straight through to `nlm`. Source-quality scores say nothing about whether an answer is correct. It does not
-handle your Google credentials: `nlm` does. Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+Four agent skills in `skills/` — install with `scripts/install-skills.sh <claude|cursor|all> [--with-guard] [--link]`:
+
+- **research-loop** — research *through* NoteLab: A/B prompts, score, curate, record wins. [SKILL.md](skills/research-loop/SKILL.md)
+- **skill-evolution** — make a prompt measurably better via champion/challenger duels on a fixed battery. [SKILL.md](skills/skill-evolution/SKILL.md)
+- **code-questions** — targeted, versioned code lookups (no account needed). [SKILL.md](skills/code-questions/SKILL.md)
+- **nlm-skill** — operate NotebookLM safely, routed through `nlmx`. [SKILL.md](skills/nlm-skill/SKILL.md)
 
 ## MCP tools (20)
 
@@ -439,66 +180,35 @@ handle your Google credentials: `nlm` does. Report vulnerabilities privately: [S
 | Tool | What it does |
 |---|---|
 | `research_run_experiment(question, strategies, weights?)` | A/B several prompt strategies; score each run's sources; rank; record to ledger |
-| `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score the data quality of an existing notebook's sources; returns per-signal scores plus a `type_mix` and `type_diversity` (how many papers/docs/repos/videos/discussions). `weights` takes a preset name (`project_kickstart`, `academic`, `forum_first`, `lit_review`, `news`, `docs`, `balanced`) or a dict (incl. `kind_weights`); `semantic_expansions` needs `MISTRAL_API_KEY` |
-| `research_export(notebook_id, question?, weights?, fmt?, deep?)` | Generate an **actionable report**: verdict, source-kind mix, problems found (blocked videos, coverage gaps, redundancy) and concrete **next actions**. `fmt`: `markdown` (default, human report), `json`, or `csv` (per-source rows). The "what do I do now" output |
+| `research_score_notebook(notebook_id, question?, weights?, semantic_expansions?)` | Score an existing notebook's sources; returns per-signal scores + `type_mix`/`type_diversity`. `weights` = a preset (`project_kickstart`/`academic`/`forum_first`/`lit_review`/`news`/`docs`/`balanced`) or a dict incl. `kind_weights` |
+| `research_export(notebook_id, question?, weights?, fmt?, deep?)` | Actionable report: verdict, source-kind mix, problems, numbered next actions. `fmt`: `markdown`/`json`/`csv` |
+| `research_assess(notebook_id, question?, mode?, weights?, use_laya?, semantic_expansions?)` | `fast` good/thin/bloated + coverage gaps, or `deep` ablation + redundant pairs + greedy prune |
+| `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?, apply?)` | Plan create/merge/skip/evict over a notebook's sources; evictions stay behind the confirm gate |
+| `research_fix_videos(notebook_id, apply?, remove_junk?)` | Repair YouTube sources imported as bot-wall pages: plan, or re-add natively so the real transcript is used |
 | `research_history(experiment_id?, limit?)` | Browse the experiment ledger, or fetch one full result |
 | `research_suggest_prompt(question)` | Reuse the winning prompt from a prior experiment on the same question |
-| `research_evolve_notebook(notebook_id, question?, keep_budget?, quality_floor?, apply?)` | Plan create / merge / skip / evict over a notebook's sources; evictions stay behind the confirm gate |
-| `research_assess(notebook_id, question?, mode?, weights?, use_laya?, semantic_expansions?)` | `fast` good/thin/bloated verdict + coverage gaps, or `deep` ablation + redundant pairs + greedy prune |
+| `research_learn_topic(question, explore?)` | Turn a topic's history into prompt mutations + a tuned weight profile |
 | `research_eval_skill(strategy_name)` | Is a strategy improving or regressing? OLS-slope trend + raw series |
-| `research_adversarial_run(prompt, runners?, timeout?)` | Run a prompt through installed agent CLIs; missing ones skipped, not failed |
-| `catalog_sync(notebook_ids?)` | Index notebooks + sources into the local catalog |
-| `catalog_search(query, limit?)` | Full-text search: "what do we already know about X" before researching again |
-| `research_learn_topic(question, explore?)` | Turn a topic's experiment history into prompt mutations + a tuned weight profile |
-| `research_spar(question, prompt, families?)` | Run one prompt through several model-family CLIs over a shared corpus; score and attribute each |
+| `research_spar(question, prompt, families?)` | Run one prompt through several model-family CLIs over a shared corpus; score + attribute |
 | `research_family_leaderboard()` | Which model family finds the best sources for which kind of question |
-| `research_ingest_codebase(repo, notebook_id?, title?, max_files?, mode?, max_sources?)` | Add a repo to a notebook: `digest` (structure summary, default) or `files` (the real source, bundled) |
+| `research_adversarial_run(prompt, runners?, timeout?)` | Run a prompt through installed agent CLIs; missing ones skipped, not failed |
+| `research_ingest_codebase(repo, notebook_id?, title?, max_files?, mode?, max_sources?)` | Add a repo to a notebook: `digest` (summary) or `files` (real source) |
+| `catalog_sync(notebook_ids?)` / `catalog_search(query, limit?)` | Index notebooks+sources locally; full-text "what do we already know about X" |
 | `code_index(repo, name?, version?)` | Index a repo locally as a kept, versioned snapshot (default label: git commit) |
-| `code_find(query, kind?, repo?, version?, limit?)` | Exact, instant lookup: `def` (with source), `callers`, `subclasses`, `text`, `any` |
-| `research_fix_videos(notebook_id, apply?, remove_junk?)` | Repair YouTube sources imported as bot-wall pages: plan, or re-add them natively so the real transcript is used |
-| `code_versions(repo?)` | List every kept version |
-| `code_diff(repo, old, new)` | Files and functions added / removed / changed between two versions |
+| `code_find(query, kind?, repo?, version?, limit?)` | Exact lookup: `def` (with source), `callers`, `subclasses`, `text`, `any` |
+| `code_versions(repo?)` / `code_diff(repo, old, new)` | List kept versions; diff files + functions added/removed/changed |
 
-Source-quality weights are config, not code: pass a preset (`project_kickstart`, `academic`,
-`forum_first`, `news`, `lit_review`, `docs`, `balanced`) or your own vector — including
-**`kind_weights`** to decide which source kinds you value (see below). Details in
-[docs/CONFIG.md](docs/CONFIG.md).
-</details>
-
-<details><summary>What the demo prints</summary>
-
-```
-1. A/B — score prompt strategies on SOURCE data quality
-   winner: authoritative  (score 0.827, margin 0.6748)
-     authoritative   quality=0.827    n_sources=3
-     broad           quality=0.1522   n_sources=2
-
-2. Ledger — record it, then reuse the winning prompt for a repeat question
-   suggested prompt next time: 'find authoritative primary quantum sources'
-
-3. Evolve — curate the notebook's sources over two cycles
-   -- cycle 1 --  merge dupe | skip new_weak (0.13 < floor 0.35) | create new_good
-   -- cycle 2 --  evict stale (weak for 2 consecutive cycles)
-
-4. Evals — is 'authoritative' improving or regressing?
-   trend: improving  (+0.081/run)   scores: [0.34, 0.41, 0.49, 0.58, 0.66]
-```
 </details>
 
 ## Docs
 
-[DESIGN](docs/DESIGN.md) architecture and quality model · [NLMX](docs/NLMX.md) the guard and its evidence ·
-[CONFIG](docs/CONFIG.md) weights and `kind_weights` · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
-[EVALUATIONS](docs/EVALUATIONS.md) what is checked and how to rerun it ·
-[EVAL REPORT](docs/EVAL-REPORT-2026-10-08.md) a full hands-on eval pass ·
-[LIVE FINDINGS](docs/LIVE-FINDINGS-2026-10-08.md) real-NotebookLM test results ·
-[GAP ANALYSIS](docs/GAP-ANALYSIS-2026-vs-SOTA.md) where NoteLab stands vs. the state of the art, and what's next ·
+[DESIGN](docs/DESIGN.md) · [CONFIG](docs/CONFIG.md) weights & `kind_weights` ·
 [DESIGN PRINCIPLE](docs/DESIGN-PRINCIPLE-user-owns-value.md) you own what you value ·
-[CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
+[NLMX](docs/NLMX.md) the guard & its evidence · [EVALUATIONS](docs/EVALUATIONS.md) ·
+[LIVE FINDINGS](docs/LIVE-FINDINGS-2026-10-08.md) · [GAP ANALYSIS](docs/GAP-ANALYSIS-2026-vs-SOTA.md) what's next ·
+[FIELD-NOTES](docs/FIELD-NOTES.md) · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
 
 ## Contributing
 
-Bug reports with an observed failure are the most useful kind: what you ran, what happened,
-what you expected. See [SCOPE.md](SCOPE.md) for the bar and [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
-
-MIT licensed.
+Bug reports with an observed failure are the most useful kind: what you ran, what happened, what you
+expected. See [SCOPE.md](SCOPE.md) for the bar and [CONTRIBUTING.md](CONTRIBUTING.md) for setup. MIT licensed.
