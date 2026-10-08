@@ -29,12 +29,10 @@ from pathlib import Path
 
 
 def _resolve_nlm() -> str:
-    """Found in a fresh third-party code review: this used to be a hardcoded
-    ~/.local/bin/nlm with no fallback. NlmxAdapter (nlmx_adapter.py) already
-    resolves its OWN binary (nlmx) via NLMX_BIN env / PATH / ~/.local/bin — this
-    mirrors that same pattern for nlm, since a pipx/uv-tool install that lands
-    nlm somewhere else would otherwise make every nlmx call silently target a
-    path with nothing there."""
+    """Resolve the `nlm` binary via NLM_BIN env / PATH / ~/.local/bin, mirroring how
+    NlmxAdapter resolves its own `nlmx` binary. A hardcoded ~/.local/bin/nlm with no
+    fallback would make every nlmx call silently target an empty path when a
+    pipx/uv-tool install lands nlm elsewhere."""
     env = os.environ.get("NLM_BIN")
     if env and os.path.exists(env):
         return env
@@ -119,9 +117,9 @@ def cmd_research_import(args):
             file=sys.stderr,
         )
 
-    # Found in a fresh third-party code review: this used to write the ledger
-    # unconditionally, so a genuinely FAILED import (network error, invalid
-    # task, nothing added) permanently blocked any future retry -- the next
+    # Only record the ledger on an import that actually happened. Writing it
+    # unconditionally means a genuinely FAILED import (network error, invalid
+    # task, nothing added) permanently blocks any future retry -- the next
     # attempt would hit the "already imported" guard above and die(), even
     # though nothing had actually landed. But exit code alone isn't reliable
     # either way (see docs/FIELD-NOTES.md gap #7: a *successful* import can
@@ -191,7 +189,10 @@ def cmd_research_run(args):
 
 
 def cmd_query(args):
-    if "--source-ids" in args or "-s" in args:
+    # Only --source-ids is the broken flag on `notebook query` / `query notebook`
+    # (it has no short alias per the CLI reference; `-s` is NOT --source-ids here,
+    # so don't refuse on `-s` or a legitimate query would be blocked).
+    if "--source-ids" in args:
         die(
             "--source-ids is confirmed broken upstream (deselects ALL sources "
             "instead of scoping to one; returns sources_used: []). "

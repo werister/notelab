@@ -50,8 +50,12 @@
 
 ### Fixed
 - `brag-output/work/render.py` no longer hardcodes a local path.
-- Stripped personal review residue ("sparring review caught this", "found live") from shipped
-  docstrings, keeping the technical rationale.
+- Stripped personal review residue ("sparring review caught this", "found live", "fresh
+  third-party code review", named reviewers) from shipped code, the `nlmx` wrapper, tests, and
+  docs — keeping the technical rationale.
+- `nlmx` guard: `notebook query` no longer refuses a bare `-s` flag. Only `--source-ids` is the
+  broken flag on query (it has no short alias), so refusing `-s` wrongly blocked a legitimate query.
+- Removed a broken doc reference to a deleted `docs/superpowers/` design file.
 
 ## v0.1 — NoteLab
 

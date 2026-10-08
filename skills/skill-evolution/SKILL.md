@@ -83,6 +83,10 @@ scaffolded scenarios to express the hypothesis, then run the command.
   research-loop cookbook's guard flow.
 - **One duel at a time per battery.** Parallel challengers race each other
   into noise; queue them.
+- **`--init` writes into the battery file you point it at.** That is by design
+  (it scaffolds the challenger entry for you to edit). Run it against *your own*
+  battery, not the shipped `eval/tasks/guard-battery.json` example — copy that
+  first if you want a starting point, so the tracked example stays clean.
 
 ## Runners and judges
 

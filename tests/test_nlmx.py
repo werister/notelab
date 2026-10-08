@@ -198,6 +198,17 @@ def test_query_without_source_ids_passes_through(monkeypatch, nlmx):
     assert calls == [["notebook", "query", "nb1", "question"]]
 
 
+def test_query_with_short_s_flag_is_not_refused(monkeypatch, nlmx):
+    """Only --source-ids is broken on `notebook query`; it has no short alias, so a
+    bare `-s` must NOT be treated as --source-ids and refused — it passes through."""
+    calls = fake_run_factory(monkeypatch, [FakeProc(returncode=0)])
+    monkeypatch.setattr("sys.argv", ["nlmx", "notebook", "query", "nb1", "question", "-s", "web"])
+    with pytest.raises(SystemExit) as exc:
+        nlmx.main()
+    assert exc.value.code == 0
+    assert calls == [["notebook", "query", "nb1", "question", "-s", "web"]]
+
+
 # ---------------------------------------------------------------------------
 # Bug #4: generation `create` commands block/no-op without --confirm
 # ---------------------------------------------------------------------------

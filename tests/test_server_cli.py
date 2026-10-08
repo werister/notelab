@@ -1,7 +1,7 @@
 """server.py's main() argument handling -- --help must print usage and return,
-not silently fall through to starting the server (found live: a blind
-third-party test ran `nlm-research-mcp --help` and got no output, just a hang
-waiting on stdin, since the only arg check was for --sdk)."""
+not silently fall through to starting the server. Without this, `nlm-research-mcp
+--help` produces no output and hangs waiting on stdin, because the only arg check
+was for --sdk."""
 import sys
 import types
 

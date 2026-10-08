@@ -22,7 +22,10 @@ python3 -m notelab.codeindex diff <repo> <old> <new>                  # files + 
 ```
 
 The same operations exist as MCP tools: `code_index`, `code_find`, `code_versions`, `code_diff`.
-Add `--version V` (or `'*'` for all) to ask about an older snapshot; the default is the newest.
+Add `--version V` (or `'*'` for all) to ask about a specific snapshot. The default version is the
+**most recently indexed** one — note this is insertion order, not commit recency, so if you backfill an
+older commit *after* indexing a newer one, pass `--version` explicitly to avoid querying the older snapshot
+by accident.
 
 ## Rules
 

@@ -83,6 +83,6 @@ Limit: Python gets AST precision; other languages use regexes and are approximat
 scripts/verify.sh
 ```
 
-348 offline tests pass and 2 optional live tests skip without keys. CI runs on Python 3.10, 3.12 and 3.13.
+353 offline tests pass and 3 optional/env-gated tests skip without keys. CI runs on Python 3.10, 3.12 and 3.13.
 `scripts/verify.sh` is the same checklist on your machine: imports, tests, the demo, the code index, both guard
 refusals, and the skills' frontmatter.

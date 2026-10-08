@@ -120,9 +120,8 @@ the common case for any real notebook (most hold well over 3 sources).
 just a different arbitrary threshold), added an opt-in Laya-based tie-breaker
 (`research/laya_judge.py`, `use_laya=True`) for exactly the ambiguous zone this bug exposed —
 sources with a clear signal never touch it, only the ones the fixed epsilon can't
-distinguish. Full design: `docs/superpowers/specs/2026-09-24-laya-ablation-judge-design.md`
-(reviewed by sc:spec-panel + GitHub Copilot before implementation — both caught real gaps,
-including a verdict-string bug and a missing wiring path, fixed before merge).
+distinguish. The design was reviewed before implementation; review caught real gaps
+(a verdict-string bug and a missing wiring path), fixed before merge.
 
 Getting Laya's own question design right took real iteration, not a first-try success — worth
 recording since it's the same "verify, don't assume" discipline this whole document is about.

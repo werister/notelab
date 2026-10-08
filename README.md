@@ -156,9 +156,12 @@ returned this mix, which we then scored with `research_score_notebook`:
 | ✍️ Walkthroughs | The Illustrated Transformer, Transformers from scratch, Raschka's self-attention tutorial, a scaled dot-product explainer |
 | 📚 Orientation | Wikipedia, "Attention Is All You Need" |
 
-NoteLab scored that set **0.79 overall, with 0.89 diversity** (10 sources across 10 domains). The scorer
-gives arXiv and Wikipedia high authority (0.95), and treats video domains and personal blogs as neutral (0.5)
-rather than pretending to rank them. Videos still earn their place through relevance and diversity.
+NoteLab scored that set **~0.63 overall, with a kind mix of 2 videos / 2 papers / 1 reference / 5
+walkthroughs** across 10 domains. The scorer gives arXiv and Wikipedia high authority (0.95) and treats
+video domains and personal blogs as neutral (0.5) rather than pretending to rank them — videos earn their
+place through relevance and the kind-diversity signal. (A set this blog-heavy scores *lower* on
+kind-diversity than a more balanced spread would, which is the signal doing its job: it is telling you to
+pull in a repo or a discussion thread, not just more walkthroughs.)
 
 **Videos need a repair step.** Deep Research imports a YouTube link as an ordinary web page, which is often a
 *"Sign in to confirm you're not a bot"* wall rather than the transcript — the notebook looks full but knows nothing
@@ -361,7 +364,7 @@ Claims here are backed by checks you can rerun. Full detail and commands: [docs/
 | Source scoring is auditable | Every composite decomposes into its five signals; weights are config | See any `research_score_notebook` output |
 | Code index is exact and versioned | Tests for verbatim source, AST callers and subclasses, text search, kept versions, diffs, non-Python symbols | In the offline suite |
 | Video repair works on real notebooks | Live: blocked YouTube copies detected, native copies added, a lecture answered from its transcript | Checked on a real notebook (see above) |
-| The whole package | 348 offline tests pass, 2 optional live tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
+| The whole package | 353 offline tests pass, 3 optional/env-gated tests skip without keys; CI on Python 3.10, 3.12, 3.13; `scripts/verify.sh` is the same checklist on your machine | green |
 
 **Design choices that limit blast radius**
 
@@ -428,7 +431,9 @@ Source-quality weights are config, not code: pass a preset (`project_kickstart`,
 
 [DESIGN](docs/DESIGN.md) architecture and quality model · [NLMX](docs/NLMX.md) the guard and its evidence ·
 [CONFIG](docs/CONFIG.md) weights · [FIELD-NOTES](docs/FIELD-NOTES.md) · [RESULTS](docs/RESULTS-2026-09-23.md) ·
-[EVALUATIONS](docs/EVALUATIONS.md) what is checked and how to rerun it · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
+[EVALUATIONS](docs/EVALUATIONS.md) what is checked and how to rerun it ·
+[EVAL REPORT](docs/EVAL-REPORT-2026-10-08.md) a full hands-on eval pass ·
+[CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SCOPE](SCOPE.md)
 
 ## Contributing
 

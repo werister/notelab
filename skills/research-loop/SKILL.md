@@ -9,12 +9,25 @@ version: "1.0.0"
 You are operating the layer *above* the NotebookLM remote control: every
 research run here is an experiment that gets better over time.
 
+## Starting a project? Lead with a diverse library
+
+When the goal is "I'm starting X — help me read widely first", pass the
+`project_kickstart` weights to `research_run_experiment` / `research_score_notebook`.
+It rewards a *mix of source kinds* (paper + docs + repo + video + discussion), so a
+notebook that is all papers scores lower on diversity than a balanced one. Read the
+`type_mix` and `type_diversity` in the result: if it is lopsided (e.g. all `paper`),
+run another arm that explicitly asks for the missing kinds (a step-by-step video, an
+example repo, a community thread), then synthesize the winning notebook into a concrete
+setup — a short spec, directory layout, mock data, a couple of tests, and key snippets,
+each cited back to its source.
+
 ## The loop in 30 seconds
 
 1. **Ask as an experiment** — `research_run_experiment(question, strategies)` runs
    2+ prompt variants into isolated notebooks and ranks them by *source-data
-   quality* (authority, diversity, recency, depth, relevance). Read `winner`
-   and `margin_over_runner_up`; never cherry-pick an arm by vibes.
+   quality* (authority, diversity, recency, depth, relevance; diversity now blends
+   domain spread with source-KIND spread). Read `winner` and
+   `margin_over_runner_up`; never cherry-pick an arm by vibes.
 2. **Curate the corpus** — `research_evolve_notebook(notebook_id, ...)` proposes
    KEEP/EVICT/MERGE/SKIP per source. It is a **dry run** unless `apply=true`.
    Read `actions` before ever applying.
