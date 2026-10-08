@@ -28,7 +28,6 @@ on ablation being reproducible should know `use_laya=True` changes that.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 from . import laya_judge
 from .quality import (

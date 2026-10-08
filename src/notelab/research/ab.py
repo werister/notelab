@@ -13,7 +13,7 @@ is the nlmx adapter (start -> poll -> import into an isolated notebook, then lis
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Protocol
+from typing import Protocol
 
 from .ablation import quick_assess
 from .quality import QualityReport, QualityWeights, SourceFeatures, score_sources

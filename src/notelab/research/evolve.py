@@ -23,7 +23,6 @@ plan, so the destructive part (eviction) always passes through the human/confirm
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from enum import Enum
 
