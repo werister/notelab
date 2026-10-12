@@ -189,10 +189,10 @@ def cmd_research_run(args):
 
 
 def cmd_query(args):
-    # Only --source-ids is the broken flag on `notebook query` / `query notebook`
-    # (it has no short alias per the CLI reference; `-s` is NOT --source-ids here,
-    # so don't refuse on `-s` or a legitimate query would be blocked).
-    if "--source-ids" in args:
+    # `--source-ids` is the broken flag on `notebook query` / `query notebook`. nlm 0.6.5 also
+    # accepts `-s` as its short form, and `--source-ids=x` / `-sx` spellings, so refuse all of them.
+    if any(a == "-s" or a.startswith("-s") and not a.startswith("--")
+           or a == "--source-ids" or a.startswith("--source-ids=") for a in args):
         die(
             "--source-ids is confirmed broken upstream (deselects ALL sources "
             "instead of scoping to one; returns sources_used: []). "
