@@ -206,10 +206,13 @@ class QualityWeights:
     # Per-KIND value weights — the "user owns what they value" knob. Maps a source
     # kind (paper/docs/repo/video/discussion/reference/web) to a 0..N multiplier on
     # that source's contribution to the composite. Empty = every kind counts equally
-    # (today's neutral default). A weight of 0.0 means "ignore this kind entirely"
-    # (it won't raise the score and won't earn kind-diversity credit). This is how a
-    # user says "for a lit review I value papers, not forum posts" or "for learning a
-    # tool I value step-by-step videos and discussion above papers" — see
+    # (today's neutral default). A weight of 0.0 means "ignore this kind entirely":
+    # it earns no kind-diversity credit AND is dropped from the weighted mean, so the
+    # score becomes the mean of only the kinds you kept — exactly as if the ignored
+    # sources were not in the set. (It is NOT folded in as a neutral 0, which would
+    # drag the score down; "ignore" means "pretend it is absent".) This is how a user
+    # says "for a lit review I value papers, not forum posts" or "for learning a tool
+    # I value step-by-step videos and discussion above papers" — see
     # docs/DESIGN-PRINCIPLE-user-owns-value.md. There is NO fixed global ranking of
     # kinds; this is purely the caller's choice.
     kind_weights: dict[str, float] = field(default_factory=dict)
@@ -382,6 +385,12 @@ class SourceScore:
     relevance: float
     kind: str = "web"
     blocked: bool = False
+    # The effective per-KIND value multiplier applied to this source's signals in the
+    # composite (from QualityWeights.kind_weights; 1.0 when the user set no per-kind
+    # weights). Exposed so the report stays auditable: with non-neutral kind_weights
+    # the composite is a kind-WEIGHTED mean, and without this multiplier a reader could
+    # not reconstruct signal_means / quality_score from the raw per-source signals.
+    kind_weight: float = 1.0
 
     def as_dict(self) -> dict:
         d = {
@@ -389,6 +398,7 @@ class SourceScore:
             "authority": round(self.authority, 4), "depth": round(self.depth, 4),
             "recency": round(self.recency, 4), "relevance": round(self.relevance, 4),
         }
+        d["kind_weight"] = round(self.kind_weight, 4)
         if self.blocked:
             d["blocked"] = True
         return d
@@ -407,6 +417,10 @@ class QualityReport:
     domain_diversity: float = 0.0       # domain-spread sub-signal (0..1)
 
     def as_dict(self) -> dict:
+        # per_source carries each source's RAW signals plus its effective kind_weight,
+        # so signal_means (a kind-WEIGHTED mean when kind_weights are set) and the
+        # composite's four per-source signals are reconstructable from this report. diversity is a
+        # set-level signal (it depends on the type/domain mix and weights), so it is not.
         return {
             "quality_score": round(self.quality_score, 4),
             "diversity": round(self.diversity, 4),
@@ -440,6 +454,7 @@ def score_sources(
             relevance=relevance_score(s, qterms, w.term_expansions),
             kind=s.kind,
             blocked=s.is_blocked,
+            kind_weight=w.kind_weight(s.kind),
         ))
 
     n = len(per_source)
@@ -450,9 +465,13 @@ def score_sources(
     # Per-KIND value weighting: each source's signals contribute in proportion to how
     # much the user values its kind (kind_weight). With no kind_weights configured
     # every weight is 1.0, so this reduces exactly to a plain mean. A kind weighted
-    # 0.0 drops out of the score entirely. The denominator is the sum of kind weights
-    # (not n) so the weighted mean stays in 0..1.
-    kw = [w.kind_weight(s.kind) for s in sources]
+    # 0.0 drops out of the weighted mean: the surviving kinds are averaged as if it
+    # were not present (an "ignore", not a neutral zero). The denominator is the sum
+    # of kind weights (not n) so the weighted mean stays in 0..1. Reuse the same
+    # per-source kind_weight stored on each SourceScore, so the report a caller reads
+    # (per_source[i].kind_weight) is exactly the factor used here — no second source
+    # of truth that could drift.
+    kw = [p.kind_weight for p in per_source]
     wsum = sum(kw)
     if wsum <= 0:
         # user zeroed out every kind present — nothing they value is here.

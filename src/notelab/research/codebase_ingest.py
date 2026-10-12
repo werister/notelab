@@ -74,6 +74,8 @@ class CodebaseDigest:
     doc_coverage: float = 0.0  # fraction of files with docstrings
     # Metadata
     ingested_at: float = field(default_factory=time.time)
+    # Files over _MAX_FILE_BYTES, skipped (never partially ingested) on both the remote and local paths.
+    skipped_oversize: List[str] = field(default_factory=list)
     ingest_duration_ms: float = 0.0
 
     def to_text(self) -> str:
@@ -152,6 +154,7 @@ class CodebaseDigest:
             "total_lines": self.total_lines,
             "test_file_ratio": self.test_file_ratio,
             "doc_coverage": self.doc_coverage,
+            "skipped_oversize": self.skipped_oversize,
         }
 
     def _is_key_file(self, f: CodeFile) -> bool:
@@ -224,6 +227,53 @@ _TEXT_EXTENSIONS = frozenset(_EXTENSION_TO_LANGUAGE) | frozenset(
 )
 
 _USER_AGENT = "notelab-codebase-ingest/1.0 (+https://github.com/werister/notelab)"
+
+# Only these hosts may be fetched over the network. _fetch_remote drives urllib
+# with a URL derived from caller input, so without an allowlist a crafted "repo"
+# (e.g. http://169.254.169.254/... or an internal host) would turn this into an
+# SSRF primitive. We only ever talk to GitHub, so pin exactly GitHub's hosts.
+_ALLOWED_REMOTE_HOSTS = frozenset({
+    "github.com", "www.github.com",
+    "api.github.com", "raw.githubusercontent.com",
+})
+
+# Hard ceiling on a single fetched/read file's bytes. max_file_lines bounds lines,
+# but truncation happens AFTER the full read; a pathological one-line or binary blob
+# could still balloon memory, so cap the raw bytes we ever hold for one file.
+_MAX_FILE_BYTES = 2_000_000
+
+
+def _require_github_url(repo_url: str) -> None:
+    """Reject anything that is not an https GitHub URL before we fetch it.
+
+    repo_url reaches here only on the remote path (it starts with 'http'); a local
+    filesystem path never gets here. Enforcing https + a host allowlist keeps this
+    from being coerced into fetching arbitrary internal/metadata endpoints (SSRF)."""
+    parsed = urlparse(repo_url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"remote ingest requires an https:// GitHub URL, got scheme "
+            f"{parsed.scheme!r} in {repo_url!r}")
+    if parsed.hostname not in _ALLOWED_REMOTE_HOSTS:
+        raise ValueError(
+            f"remote ingest only fetches from GitHub ({', '.join(sorted(_ALLOWED_REMOTE_HOSTS))}); "
+            f"refusing host {parsed.hostname!r} in {repo_url!r}")
+
+
+class _GitHubOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    """Re-apply the GitHub allowlist to every redirect hop, so an allowed host cannot
+    bounce us to an internal or http:// endpoint."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _require_github_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_GitHubOnlyRedirect)
+
+
+def _urlopen(req, timeout):
+    return _OPENER.open(req, timeout=timeout)
 
 
 def _detect_language(path: str) -> str:
@@ -325,6 +375,7 @@ class CodebaseIngester:
     def __init__(self, max_files: int = 200, max_file_lines: int = 500):
         self.max_files = max_files
         self.max_file_lines = max_file_lines
+        self._skipped_oversize: List[str] = []
 
     def ingest(self, repo_url: str) -> CodebaseDigest:
         """Ingest a repo and return a CodebaseDigest.
@@ -336,6 +387,7 @@ class CodebaseIngester:
             CodebaseDigest with files, languages, and quality signals.
         """
         t0 = time.time()
+        self._skipped_oversize = []
 
         if repo_url.startswith("http"):
             files, branch = self._fetch_remote(repo_url)
@@ -384,6 +436,7 @@ class CodebaseIngester:
             doc_coverage=round(doc_coverage, 4),
             ingested_at=time.time(),
             ingest_duration_ms=round(duration_ms, 1),
+            skipped_oversize=list(self._skipped_oversize),
         )
 
     def _fetch_remote(self, repo_url: str) -> Tuple[List[CodeFile], str]:
@@ -393,6 +446,9 @@ class CodebaseIngester:
         Skips files that are too large or match skip patterns.
         Returns (files, default_branch).
         """
+        # Gate every network entry: https + GitHub-only host, no SSRF to internal
+        # or metadata endpoints via a crafted repo_url.
+        _require_github_url(repo_url)
         # Extract owner/repo from URL
         parsed = urlparse(repo_url)
         parts = parsed.path.strip("/").split("/")
@@ -410,7 +466,7 @@ class CodebaseIngester:
         )
         req = urllib.request.Request(tree_url, headers={
             "Accept": "application/json", "User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _urlopen(req, timeout=30) as resp:
             tree_data = json.loads(resp.read().decode("utf-8"))
 
         blobs = [i for i in tree_data.get("tree", []) if i.get("type") == "blob"]
@@ -436,8 +492,15 @@ class CodebaseIngester:
                 req = urllib.request.Request(
                     raw_url, headers={"Accept": "text/plain", "User-Agent": _USER_AGENT}
                 )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    content = resp.read().decode("utf-8", errors="replace")
+                with _urlopen(req, timeout=15) as resp:
+                    # Bound the bytes we read: max_file_lines is applied only after a
+                    # full read, so a single huge/one-line blob could otherwise blow
+                    # memory. Read one byte past the cap to detect an oversized file.
+                    raw = resp.read(_MAX_FILE_BYTES + 1)
+                if len(raw) > _MAX_FILE_BYTES:
+                    self._skipped_oversize.append(path)  # same rule as the local walk
+                    continue
+                content = raw.decode("utf-8", errors="replace")
             except Exception:
                 continue  # skip files that fail to fetch
 
@@ -469,8 +532,20 @@ class CodebaseIngester:
     def _walk_local(self, root: Path) -> List[CodeFile]:
         """Walk a local directory and extract code files (sorted for determinism)."""
         files: List[CodeFile] = []
+        root_resolved = root.resolve()
         for path in sorted(root.rglob("*"), key=str):
             if not path.is_file():
+                continue
+            # Containment: rglob follows directory symlinks, so a symlink pointing
+            # outside the repo (e.g. to ~/.ssh or /etc) would otherwise be read and
+            # bundled into a source. Resolve and require the real path to stay under
+            # the repo root; skip anything that escapes.
+            try:
+                real = path.resolve()
+                real.relative_to(root_resolved)
+            except (OSError, ValueError):
+                continue
+            if path.is_symlink():
                 continue
             rel_path = str(path.relative_to(root))
             if _should_skip(rel_path):
@@ -479,6 +554,11 @@ class CodebaseIngester:
                 break
 
             try:
+                # Skip oversized files outright: max_file_lines truncates only after
+                # a full read, so bound the bytes a single file can cost us.
+                if path.stat().st_size > _MAX_FILE_BYTES:
+                    self._skipped_oversize.append(rel_path)
+                    continue
                 content = path.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
@@ -513,7 +593,7 @@ class CodebaseIngester:
         url = f"https://api.github.com/repos/{owner}/{repo}"
         req = urllib.request.Request(url, headers={
             "Accept": "application/json", "User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with _urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return data.get("default_branch", "main")
 

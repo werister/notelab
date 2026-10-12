@@ -263,3 +263,35 @@ def test_report_decomposes_into_signals():
     assert set(d["signal_means"]) == {"authority", "depth", "recency", "relevance", "diversity"}
     assert set(d["weights"]) == {"authority", "diversity", "recency", "depth", "relevance"}
     assert d["per_source"][0]["domain"] == "arxiv.org"
+
+
+def test_report_exposes_kind_weight_so_composite_is_reconstructable():
+    """Auditability (CONTRIBUTING): with non-neutral kind_weights the signal_means
+    are a kind-WEIGHTED mean, so each source's effective kind_weight must appear in
+    the report, else a reader cannot reproduce signal_means from per_source."""
+    # A paper and a forum post; the user values papers and ignores discussion.
+    paper = _src(url="https://arxiv.org/abs/1", content="x" * 5000, source_type="paper")
+    forum = _src(url="https://reddit.com/r/x/1", content="y" * 5000,
+                 source_type="discussion")
+    w = QualityWeights(kind_weights={"paper": 1.0, "discussion": 0.0})
+    report = score_sources([paper, forum], question="x", weights=w).as_dict()
+
+    per = {s["id"]: s for s in report["per_source"]}
+    # The multiplier is always present, so a reader never has to know an implicit default.
+    assert per["https://arxiv.org/abs/1"]["kind_weight"] == 1.0
+    assert per["https://reddit.com/r/x/1"]["kind_weight"] == 0.0
+
+    # Reconstruct each weighted signal mean from the raw per-source signals + weights.
+    for signal in ("authority", "depth", "recency", "relevance"):
+        num = sum(s[signal] * s["kind_weight"] for s in report["per_source"])
+        den = sum(s["kind_weight"] for s in report["per_source"])
+        expected = num / den if den else 0.0
+        assert abs(report["signal_means"][signal] - expected) < 1e-4, signal
+
+
+def test_neutral_kind_weights_still_report_the_multiplier():
+    """With no kind_weights set the multiplier is still emitted (1.0), so the report
+    schema does not change shape depending on the user's config."""
+    s = _src(url="https://arxiv.org/abs/1", content="x" * 2000)
+    report = score_sources([s], question="x").as_dict()
+    assert report["per_source"][0]["kind_weight"] == 1.0

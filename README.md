@@ -22,8 +22,18 @@ layer *above* it — it judges whether the sources are any good, and helps your 
 
 ## Install
 
+Python 3.10+ (CI covers 3.10 through 3.14). Install into a virtualenv:
+
 ```bash
-pip install -e .                       # stdlib-only, no third-party deps
+python3 -m venv .venv && . .venv/bin/activate   # or: uv venv && . .venv/bin/activate
+pip install -e .                                 # stdlib-only, no third-party deps
+```
+On a very new interpreter whose stdlib `venv` can't bootstrap pip (seen with some
+Homebrew Python 3.14 builds: `python3 -m venv` fails in `ensurepip`), use
+[uv](https://docs.astral.sh/uv/) instead — it creates the venv and installs without
+relying on `ensurepip`:
+```bash
+uv venv && uv pip install -e .
 ```
 Wire it into any MCP client:
 ```json
@@ -41,6 +51,7 @@ Install the agent skills (Claude Code / Cursor / Copilot): `scripts/install-skil
 
 ```bash
 git clone https://github.com/werister/notelab && cd notelab
+python3 -m venv .venv && . .venv/bin/activate   # or: uv venv && . .venv/bin/activate
 pip install -e ".[dev]"
 scripts/verify.sh            # offline tests + demo + guard refusals, one checklist
 ```
@@ -154,7 +165,7 @@ Claims here are backed by checks you can rerun — full detail and commands in
 | Source scoring is auditable | every composite decomposes into its five signals; weights are config |
 | Skills improve only when they **measurably** win | recorded duels held (tie → no promotion); the gate refuses unearned wins |
 | Live NotebookLM path | verified end-to-end: auth, real Deep Research, the guard refusing a **real** duplicate import, `research_fix_videos` turning a 21k bot-wall shell into a 144k transcript |
-| The whole package | **367 offline tests pass**, 3 optional/env-gated skip; CI on Python 3.10/3.12/3.13 |
+| The whole package | **the offline suite passes**, 2 optional/env-gated tests skip; CI on Python 3.10 through 3.14 |
 
 **What it does not do.** `nlmx` guards the behaviours above, not all of NotebookLM; everything else passes
 through to `nlm`. Source-quality scores say nothing about whether an answer is *correct*. It does not handle

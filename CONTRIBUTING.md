@@ -25,10 +25,11 @@ pytest -q                   # offline
 python examples/self_improving_loop.py   # see the whole loop, no account needed
 ```
 
-The suite reports `N passed, 1 skipped`: that one skip is
-`test_live_semantic_beats_lexical_coverage_on_synonym_heavy_fixture`, a live network
-test gated on a real `MISTRAL_API_KEY` (see `-ra` output for the reason). It's expected
-to skip in CI and on a fresh checkout — it isn't a broken test.
+The suite reports `N passed, 2 skipped`: those two skips are
+`test_live_semantic_beats_lexical_coverage_on_synonym_heavy_fixture` (a live network
+test gated on a real `MISTRAL_API_KEY`) and the live Laya ablation test (gated on
+`laya-mlx`, `pip install 'notelab[laya]'`). Both are expected to skip in CI and on a
+fresh checkout (see `-rs` output for the reasons) — they aren't broken tests.
 
 ## Adding an adversarial runner
 

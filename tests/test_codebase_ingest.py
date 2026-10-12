@@ -3,6 +3,7 @@ plus a mocked urlopen for the GitHub API path."""
 
 import io
 import json
+import urllib.request
 
 import pytest
 
@@ -122,8 +123,12 @@ class _FakeResponse:
     def __init__(self, payload: bytes):
         self._payload = payload
 
-    def read(self):
-        return self._payload
+    def read(self, amt=None):
+        # Mirror http.client.HTTPResponse.read(amt): a bounded read returns at most
+        # `amt` bytes. The ingester reads one byte past its cap to detect oversize.
+        if amt is None:
+            return self._payload
+        return self._payload[:amt]
 
     def __enter__(self):
         return self
@@ -148,7 +153,7 @@ def test_remote_ingest_mocked(monkeypatch):
         return _FakeResponse(SAMPLE_PY.encode())
 
     monkeypatch.setattr(
-        "notelab.research.codebase_ingest.urllib.request.urlopen", fake_urlopen
+        "notelab.research.codebase_ingest._urlopen", fake_urlopen
     )
     digest = CodebaseIngester().ingest("https://github.com/o/r")
 
@@ -177,7 +182,7 @@ def test_remote_prefers_code_over_docs(monkeypatch):
         return _FakeResponse(b"x = 1\n")
 
     monkeypatch.setattr(
-        "notelab.research.codebase_ingest.urllib.request.urlopen", fake_urlopen
+        "notelab.research.codebase_ingest._urlopen", fake_urlopen
     )
     digest = CodebaseIngester(max_files=1).ingest("https://github.com/o/r")
 
@@ -196,7 +201,7 @@ def test_remote_fetch_failure_skips_file(monkeypatch):
         raise OSError("boom")
 
     monkeypatch.setattr(
-        "notelab.research.codebase_ingest.urllib.request.urlopen", fake_urlopen
+        "notelab.research.codebase_ingest._urlopen", fake_urlopen
     )
     digest = CodebaseIngester().ingest("https://github.com/o/r")
 
@@ -293,7 +298,7 @@ def test_remote_long_file_truncated_to_cap(monkeypatch):
         return _FakeResponse(body)
 
     monkeypatch.setattr(
-        "notelab.research.codebase_ingest.urllib.request.urlopen", fake_urlopen
+        "notelab.research.codebase_ingest._urlopen", fake_urlopen
     )
     digest = CodebaseIngester(max_file_lines=5).ingest("https://github.com/o/r")
     assert digest.files[0].lines == 5
@@ -305,3 +310,104 @@ def test_check_docstrings_js_and_go():
     assert ing._check_docstrings("const x = 1;", "JavaScript") is False
     assert ing._check_docstrings("// c\nfunc main() {}", "Go") is True
     assert ing._check_docstrings("func main() {}", "Go") is False
+
+
+# --- remote-fetch safety: host allowlist + https-only (SSRF guard) -------------
+
+@pytest.mark.parametrize("bad_url", [
+    "http://github.com/o/r",                    # not https
+    "https://evil.com/o/r",                     # not a GitHub host
+    "https://169.254.169.254/latest/meta-data",  # cloud metadata endpoint
+    "https://api.github.com.evil.com/o/r",      # look-alike host
+])
+def test_remote_ingest_rejects_non_github_urls(bad_url, monkeypatch):
+    # No network should ever happen for a rejected URL: make urlopen explode so the
+    # test fails loudly if the guard lets a request through.
+    def boom(*a, **k):
+        raise AssertionError(f"network call attempted for rejected URL: {a!r}")
+    monkeypatch.setattr(
+        "notelab.research.codebase_ingest._urlopen", boom
+    )
+    with pytest.raises(ValueError):
+        CodebaseIngester().ingest(bad_url)
+
+
+def test_remote_ingest_allows_github(monkeypatch):
+    tree = {"tree": [{"type": "blob", "path": "a.py"}]}
+
+    def fake_urlopen(req, timeout=None):
+        url = req.full_url
+        if url.endswith("/repos/o/r"):
+            return _FakeResponse(json.dumps({}).encode())
+        if "/git/trees/" in url:
+            return _FakeResponse(json.dumps(tree).encode())
+        return _FakeResponse(b"x = 1\n")
+
+    monkeypatch.setattr(
+        "notelab.research.codebase_ingest._urlopen", fake_urlopen
+    )
+    digest = CodebaseIngester().ingest("https://github.com/o/r")
+    assert [f.path for f in digest.files] == ["a.py"]
+
+
+# --- local-walk safety: a symlink escaping the repo root is not ingested -------
+
+def test_local_walk_skips_symlink_escaping_root(tmp_path):
+    import os
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "real.py").write_text("x = 1\n")
+    # A secret living OUTSIDE the repo root.
+    secret = tmp_path / "secret.py"
+    secret.write_text("TOKEN = 'leak-me'\n")
+    link = repo / "pwn.py"
+    try:
+        os.symlink(secret, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported on this platform/filesystem")
+    digest = CodebaseIngester().ingest(str(repo))
+    paths = [f.path for f in digest.files]
+    assert "real.py" in paths
+    assert "pwn.py" not in paths
+    # And the secret content never made it into any ingested file.
+    assert all("leak-me" not in f.content for f in digest.files)
+
+
+def test_redirect_off_the_allowlist_is_refused():
+    import http.client
+    from notelab.research.codebase_ingest import _GitHubOnlyRedirect
+    h = _GitHubOnlyRedirect()
+    req = urllib.request.Request("https://api.github.com/repos/o/r")
+    hdrs = http.client.HTTPMessage()
+    for bad in ("http://169.254.169.254/latest", "https://evil.com/x", "http://api.github.com/x"):
+        with pytest.raises(ValueError):
+            h.redirect_request(req, None, 302, "Found", hdrs, bad)
+    ok = h.redirect_request(req, None, 301, "Moved", hdrs, "https://api.github.com/repositories/1")
+    assert ok.full_url == "https://api.github.com/repositories/1"
+
+
+def test_oversized_file_is_skipped_and_reported_on_the_local_path(tmp_path):
+    from notelab.research.codebase_ingest import _MAX_FILE_BYTES
+    (tmp_path / "ok.py").write_text("x = 1\n")
+    (tmp_path / "big.py").write_text("y = 2\n" * (_MAX_FILE_BYTES // 6 + 10))
+    digest = CodebaseIngester().ingest(str(tmp_path))
+    assert [f.path for f in digest.files] == ["ok.py"]
+    assert digest.skipped_oversize == ["big.py"]
+
+
+def test_oversized_file_is_skipped_and_reported_on_the_remote_path(monkeypatch):
+    from notelab.research.codebase_ingest import _MAX_FILE_BYTES
+    tree = {"tree": [{"type": "blob", "path": "ok.py"}, {"type": "blob", "path": "big.py"}]}
+
+    def fake_urlopen(req, timeout=None):
+        url = req.full_url
+        if url.endswith("/repos/o/r"):
+            return _FakeResponse(json.dumps({"default_branch": "main"}).encode())
+        if "/git/trees/" in url:
+            return _FakeResponse(json.dumps(tree).encode())
+        return _FakeResponse(b"x = 1\n" if url.endswith("ok.py") else b"y" * (_MAX_FILE_BYTES + 5))
+
+    monkeypatch.setattr("notelab.research.codebase_ingest._urlopen", fake_urlopen)
+    digest = CodebaseIngester().ingest("https://github.com/o/r")
+    assert [f.path for f in digest.files] == ["ok.py"]
+    assert digest.skipped_oversize == ["big.py"]
