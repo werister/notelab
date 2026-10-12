@@ -256,6 +256,21 @@ def test_chat_start_refused(monkeypatch, nlmx):
     assert exc.value.code == 1
 
 
+def test_chat_start_guidance_names_a_command_nlmx_accepts(monkeypatch, nlmx, capsys):
+    """The refusal must point at a command that actually works (it used to name one that exited rc=2)."""
+    monkeypatch.setattr("sys.argv", ["nlmx", "chat", "start", "nb1"])
+    with pytest.raises(SystemExit):
+        nlmx.main()
+    seen = capsys.readouterr()
+    assert "nlmx query notebook" in seen.err + seen.out
+    calls = fake_run_factory(monkeypatch, [FakeProc(returncode=0)])
+    monkeypatch.setattr("sys.argv", ["nlmx", "query", "notebook", "nb1", "q"])
+    with pytest.raises(SystemExit) as exc:
+        nlmx.main()
+    assert exc.value.code == 0
+    assert calls == [["query", "notebook", "nb1", "q"]]
+
+
 # ---------------------------------------------------------------------------
 # research run — new composite: start -> poll -> import, exactly once
 # ---------------------------------------------------------------------------

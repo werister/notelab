@@ -43,7 +43,7 @@ def main() -> None:
 
     sources: list[SourceFeatures] = []
     for s in picked:
-        content = _nlmx("source", "content", s["id"], timeout=30)
+        content = _nlmx("source", "content", s["id"], timeout=180)
         sources.append(SourceFeatures(id=s["id"], title=s.get("title") or "",
                                       url=s.get("url", ""), content=content))
         print(f"  fetched {s['id'][:8]} ({len(content)} chars): {s.get('title')}", file=sys.stderr)

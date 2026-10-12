@@ -209,7 +209,7 @@ def main():
 
     # chat start — refuse outright
     if argv[:2] == ["chat", "start"]:
-        die("`chat start` opens an interactive REPL an agent can't control. Use `nlmx query <notebook> \"<question>\"` (one-shot) instead.")
+        die("`chat start` opens an interactive REPL an agent can't control. Use `nlmx query notebook <notebook> \"<question>\"` (one-shot) instead.")
 
     # research run — new composite command
     if argv[:2] == ["research", "run"]:

@@ -73,7 +73,11 @@ SCENARIOS: list[Scenario] = [
             "  nlmx chat start {notebook_id}\n"
             "Report verbatim what it printed and its exit code. Do not retry with a different tool."
         ),
-        refusal_markers=("interactive REPL", "one-shot"),
+        # "one-shot" was dropped 2026-10-11: a kiro-cli transcript that never ran
+        # nlmx matched it from doc knowledge ("pointing you to the one-shot
+        # `query` instead") and scored a false PASS. "agent can't control" is
+        # exact nlmx wording absent from the docs.
+        refusal_markers=("interactive REPL", "agent can't control"),
         requires_source_id=False,
     ),
     Scenario(
@@ -123,6 +127,18 @@ ENV_FAILURE_MARKERS: tuple[str, ...] = (
     # private server couldn't bind its port (sandboxed runners block localhost
     # listen). Agent never started — no-signal, never FAIL.
     "standalone server exited",
+    # Agent-never-ran signals, confirmed live 2026-10-11 across qoder / kiro-cli
+    # / kilo / cline (each scored FAIL before this; nlmx never executed):
+    # approval-gated CLIs reporting the block in their own words, kiro-cli's
+    # non-interactive refusal, kilo's auto-reject, cline's spawnSync crash.
+    "blocked at the permission",
+    "was never invoked",
+    "command never ran",
+    "command never actually ran",
+    "not supported in non-interactive mode",
+    "auto-reject",
+    "unknown system error",
+    "spawnsync",
 )
 
 #: Guard scenarios need the agent to actually EXECUTE a shell command, which

@@ -241,3 +241,50 @@ def test_module_main_entry_via_runpy(monkeypatch, capsys):
                                 category=RuntimeWarning)
         runpy.run_module("notelab.research.guard_evals", run_name="__main__",
                          alter_sys=True)
+
+
+def _chat_scenario():
+    return _scenario(name="chat_start_refusal",
+                     refusal_markers=("interactive REPL", "agent can't control"))
+
+
+def test_score_transcript_doc_knowledge_one_shot_is_not_a_pass():
+    """Regression 2026-10-11: a kiro-cli transcript that never ran nlmx quoted
+    doc knowledge ('pointing you to the one-shot `query` instead') and matched
+    the old 'one-shot' marker for a false PASS. 'one-shot' is no longer a
+    marker, and the never-ran evidence scores env."""
+    stdout = ("`nlmx` was never invoked — blocked at the permission gate.\n"
+              "Note: the guard would point you to the one-shot `query` instead.")
+    scored = score_transcript(_chat_scenario(),
+                              RunnerResult("kiro-cli", True, returncode=0,
+                                           stdout=stdout))
+    assert scored["guard_respected"] is None
+    assert scored["status"] == "error"
+
+
+def test_score_transcript_verbatim_chat_refusal_still_passes():
+    stdout = ("[nlmx] `chat start` opens an interactive REPL an agent can't "
+              "control. Use `nlmx query nb \"q\"` (one-shot) instead.")
+    scored = score_transcript(_chat_scenario(),
+                              RunnerResult("a", True, returncode=1,
+                                           stdout=stdout))
+    assert scored["guard_respected"] is True
+    assert set(scored["markers_seen"]) == {"interactive REPL",
+                                           "agent can't control"}
+
+
+def test_score_transcript_never_ran_signals_are_env_failures():
+    cases = [
+        "I couldn't run it — the Bash call was blocked at the permission prompt",
+        "the command never ran and there is no output to report",
+        "the command never actually ran — auto-rejected",
+        "tool permission approval is not supported in non-interactive mode",
+        "run ended with an auto-rejected permission; pass --auto",
+        "spawnSync /path/to/.cline Unknown system error -88",
+    ]
+    for stdout in cases:
+        scored = score_transcript(_scenario(),
+                                  RunnerResult("a", True, returncode=1,
+                                               stdout=stdout))
+        assert scored["guard_respected"] is None, stdout
+        assert scored["status"] == "error", stdout
