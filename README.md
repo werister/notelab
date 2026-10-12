@@ -7,6 +7,8 @@
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![deps](https://img.shields.io/badge/engine-stdlib--only-informational)
 
+**Why use it:** your agent researches through NotebookLM, NoteLab scores whether the sources were any good with a number you can check, and a guard (`nlmx`) blocks the commands that silently corrupt a notebook, all in a stdlib-only engine you can read in an afternoon; in our one cost test, answering from a notebook cost less than reading the papers.
+
 Most "NotebookLM MCP" tools are a remote control: create notebook, add source, query. NoteLab is the
 layer *above* it — it judges whether the sources are any good, and helps your agent act on them.
 
@@ -15,16 +17,17 @@ layer *above* it — it judges whether the sources are any good, and helps your 
 - 🧪 **A scored, diverse research library.** Pulls papers, docs, repos, videos and discussion into a notebook and scores the set — authority, **kind-diversity**, recency, depth, relevance — so "did I read widely enough?" is a number, not a feeling. Deterministic, **zero model tokens**. → [quality model](docs/DESIGN.md)
 - 🎚️ **You decide what counts as good.** Weight papers over forums, forums over papers, or anything per use-case with `kind_weights` — no fixed ranking baked in. → [the principle](docs/DESIGN-PRINCIPLE-user-owns-value.md) · [config](docs/CONFIG.md)
 - 🧭 **From a score to an action.** `research_export` turns the scored library into a report with a verdict, the gaps, and numbered **next actions** — safe to hand a human or paste into a PR.
-- 🛡️ **A guard (`nlmx`) that can't be talked around.** Refuses the NotebookLM commands that silently corrupt a library (duplicate imports, broken `--source-ids`, `chat start`). Live agents from two model families were stopped **6/6**. → [the guard & its evidence](docs/NLMX.md)
+- 🛡️ **A guard (`nlmx`) that can't be talked around.** Refuses the NotebookLM commands that silently corrupt a library (duplicate imports, `--source-ids` on older `nlm`, `chat start`). In the 2026-10-07 sweep, live agents from two model families were stopped **6/6**. → [the guard & its evidence](docs/NLMX.md)
 - 🔁 **A loop that learns.** A/B-test research prompts on measured source quality, store the winner per topic, replay it next time. → [how it works](#how-it-works)
 - 🔎 **A versioned code index** (bonus, no account needed). Exact `where is X` / `who calls X` / `what subclasses X` / `what changed since v1.2`, with real `repo@commit/path:line` source — and every version is kept.
 - 📦 **Stdlib-only engine.** The whole scorer/loop/MCP server installs and tests with **zero third-party dependencies**; you can read the whole thing.
 
 ## Install
 
-Python 3.10+ (CI covers 3.10 through 3.14). Install into a virtualenv:
+Python 3.10+ (CI covers 3.10 through 3.14). Clone, then install into a virtualenv:
 
 ```bash
+git clone https://github.com/werister/notelab && cd notelab
 python3 -m venv .venv && . .venv/bin/activate   # or: uv venv && . .venv/bin/activate
 pip install -e .                                 # stdlib-only, no third-party deps
 ```
@@ -83,7 +86,7 @@ Observed failures, each reproduced on isolated notebooks and checked against gro
 | The failure | What the agent sees | What NoteLab does |
 |---|---|---|
 | `research import` run twice **duplicates every source** | the same "✓ Imported N sources" both times | `nlmx` keeps a ledger and refuses the repeat unless `--force` |
-| `--source-ids` **deselects every source** | `sources_used: []` | `nlmx` refuses and names the working alternative |
+| `--source-ids` **deselects every source** (seen on `nlm` 0.6.5; works on 0.15.4) | `sources_used: []` | `nlmx` refuses it on every version for now and names the alternative |
 | generation commands silently no-op without `--confirm` | nothing | `nlmx` injects the flag |
 | `chat start` opens a REPL an agent can't drive | a hang | `nlmx` refuses, points to one-shot `query` |
 | research prompts tuned by vibes | "this one felt better" | A/B on measured source quality, winner stored |
@@ -161,7 +164,7 @@ Claims here are backed by checks you can rerun — full detail and commands in
 
 | What is checked | Result |
 |---|---|
-| The guard stops a **real agent**, not just a unit test | **6/6** across two model families (opencode 3/3, claude 3/3) |
+| The guard stops a **real agent**, not just a unit test | **6/6** in the 2026-10-07 sweep (opencode 3/3, claude 3/3). In the 2026-10-11 sweep only opencode gave a real signal (3/3); the other runners were blocked by quotas or approval prompts |
 | Source scoring is auditable | every composite decomposes into its five signals; weights are config |
 | Skills improve only when they **measurably** win | recorded duels held (tie → no promotion); the gate refuses unearned wins |
 | Live NotebookLM path | verified end-to-end: auth, real Deep Research, the guard refusing a **real** duplicate import, `research_fix_videos` turning a 21k bot-wall shell into a 144k transcript |

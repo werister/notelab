@@ -23,6 +23,8 @@ Root cause for the Claude/Cursor failures: the underlying `notebooklm-mcp` binar
 
 ### 3. `--source-ids` on `notebook query` is broken
 
+> **Version note (2026-10-12):** observed on `nlm` 0.6.5. On `nlm` 0.15.4 the same flag scopes correctly (`sources_used` was exactly the id given), so this guard refuses a flag that now works. `nlmx` still refuses it on every version until it can check which `nlm` is installed.
+
 Documented as "Comma-separated source IDs to query (default: all)". In practice, passing it **deselects every source instead of scoping to the one given** — `sources_used: []`, `"No sources are currently selected"`. Reproduced directly, consistently. Omitting the flag (querying all sources) works fine.
 
 ### 4. Generation commands need `--confirm`/`-y` or they silently block/no-op

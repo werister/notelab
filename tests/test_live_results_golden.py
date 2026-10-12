@@ -66,8 +66,8 @@ def test_golden_specific_question_deep_ablation_finds_the_right_load_bearing_sou
     sources = _load_sources()
     deep = quick_assess(sources, Q2, mode="deep")
     load_bearing = [p["id"] for p in deep["ablation"]["per_source"] if p["verdict"] == "load-bearing"]
-    assert load_bearing == ["00000000-0000-4000-8000-000000000000"]
-    assert deep["greedy_prune"]["kept_ids"] == ["00000000-0000-4000-8000-000000000000"]
+    assert load_bearing == ["00000000-0000-4000-8000-000000000011"]
+    assert deep["greedy_prune"]["kept_ids"] == ["00000000-0000-4000-8000-000000000011"]
 
 
 def test_golden_specific_question_fast_lane_misses_what_deep_catches():

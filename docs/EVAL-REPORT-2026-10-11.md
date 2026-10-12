@@ -15,8 +15,8 @@ repro matches Sept-23 verdicts on a grown notebook. From-scratch research cost
 - **Environment:** nlm 0.15.4 (upgraded mid-session), networked macOS shell.
 - **Commit under test:** `137504f` (main) plus the fixes in this change set.
 - **How to reproduce:** `python -m notelab.research.guard_evals --notebook-id
-  00000000-0000-4000-8000-000000000000 --source-id
-  00000000-0000-4000-8000-000000000000 --runners qoder kiro-cli opencode kilo
+  <NOTEBOOK_ID> --source-id
+  <SOURCE_ID> --runners qoder kiro-cli opencode kilo
   cline --out report.json` (live model calls on each CLI).
 
 ---

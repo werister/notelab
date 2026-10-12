@@ -249,7 +249,7 @@ notebook. The internal `nlm research start` call detected a prior research task 
 considered pending/unconsumed and printed an interactive conflict prompt:
 ```
 Warning: Previous research completed with sources not yet imported.
-  Task ID: 00000000-0000-4000-8000-000000000000
+  Task ID: <TASK_ID>
   Sources available: 66
 Starting new research will discard existing results.
 Continue and start new research? [y/N]:
