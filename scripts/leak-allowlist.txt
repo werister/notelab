@@ -1,0 +1,4 @@
+# substrings of a finding's path or masked text to ignore
+skills/nlm-skill/references/command_reference.md
+tests/test_nlmx_adapter.py
+kiro-agent

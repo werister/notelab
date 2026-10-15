@@ -36,6 +36,14 @@ fresh checkout (see `-rs` output for the reasons) — they aren't broken tests.
 Append a `RunnerSpec` to `KNOWN_RUNNERS` in `research/evals.py` with the binary name
 and a one-shot args template using `{prompt}`. Detection and graceful-skip are automatic.
 
+## Before you push (and before the repo goes public)
+
+`python scripts/scan_leaks.py` checks tracked files for key/token shapes, home-directory paths, real
+email addresses, private IPs and notebook-image URLs; `--history` also checks every added line,
+commit message and author across remote branches and PR refs. Put personal terms (your username,
+name, hostnames) one per line in `.local/leak-terms.txt` (git-ignored) and they are checked too.
+`tests/test_no_leaks.py` runs the generic scan in CI.
+
 ## PRs
 
 Keep them focused, add a test for behaviour you change, and run `pytest -q` before
